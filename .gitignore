@@ -1,0 +1,77 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# Data files (too large for git)
+data/raw/**
+data/processed/**
+data/validated/**
+data/datasets/*.h5
+!data/lexicons/
+!data/test/.gitkeep
+
+# Model checkpoints (too large)
+checkpoints/**/*.bin
+checkpoints/**/*.pt
+checkpoints/**/*.safetensors
+!checkpoints/.gitkeep
+
+# Results
+results/**/*.png
+results/**/*.pdf
+results/**/*.csv
+
+# Logs
+logs/**
+wandb/**
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+*.key
+*.pem
+api_keys.txt
+
+# Large files
+*.mp4
+*.avi
+*.mov
+*.mkv

@@ -1,0 +1,64 @@
+# Phase 1 Medical Domain Configuration
+model: mistralai/Mistral-7B-v0.1
+dtype: bfloat16
+phase: phase1
+domain: medical
+
+# LoRA Configuration
+lora_config:
+  r: 32
+  lora_alpha: 64
+  lora_dropout: 0.1
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+  bias: none
+  task_type: CAUSAL_LM
+
+# Training Configuration
+batch_size: 3
+gradient_accumulation_steps: 6
+gradient_checkpointing: true
+max_seq_length: 4096
+num_epochs: 0.5
+
+# Optimizer
+optimizer:
+  type: AdamW
+  learning_rate: 2e-4
+  lora_A_lr: 1e-4  # LoRA+ asymmetric
+  lora_B_lr: 2e-4
+  betas: [0.9, 0.999]
+  weight_decay: 0.01
+
+# Scheduler
+lr_scheduler:
+  type: cosine
+  warmup_steps: 100
+  num_training_steps: 2000
+
+# Data
+data_config:
+  dataset_path: data/datasets/medical.h5
+  data_mix:
+    papers: 1.0
+  num_workers: 8
+  pin_memory: true
+  prefetch_factor: 2
+
+# Logging
+logging:
+  wandb_project: hybrid-video-sum
+  wandb_entity: null
+  log_steps: 50
+  eval_steps: 500
+  save_steps: 500
+  save_total_limit: 3
+
+# Output
+output_dir: checkpoints/phase1/medical
