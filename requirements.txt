@@ -1,45 +1,168 @@
-# Core ML
-torch==2.1.2
-torchvision==0.16.2
-torchaudio==2.1.2
+# ==============================================================================
+# HYBRID-DATASET SUMMARISER - REQUIREMENTS
+# ==============================================================================
+#
+# INSTALLATION INSTRUCTIONS:
+#
+# 1. Create conda environment:
+#    conda create -n hybrid-video python=3.11 -y
+#    conda activate hybrid-video
+#
+# 2. Install PyTorch nightly (REQUIRED for RTX 5070 Ti sm_120 support):
+#    pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu130
+#
+# 3. Install dependencies:
+#    pip install -r requirements.txt
+#
+# 4. Download NLTK data:
+#    python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab')"
+#
+# ==============================================================================
+# PYTORCH (Install separately - see step 2 above)
+# ==============================================================================
+#
+# DO NOT install via this file. Use the command in step 2.
+# PyTorch nightly with CUDA 13.0 is required for RTX 5070 Ti (sm_120).
+#
+# torch>=2.7.0.dev (nightly)
+# torchvision>=0.22.0.dev (nightly)
+#
+# ==============================================================================
+# CORE ML LIBRARIES
+# ==============================================================================
 
-# Transformers & PEFT
-transformers==4.36.0
-peft==0.8.0
-accelerate==0.26.0
-bitsandbytes==0.42.0
+# HuggingFace Transformers for Mistral-7B
+transformers>=4.46.0
 
-# Data
-datasets==2.16.0
-h5py==3.10.0
-pandas==2.1.4
-numpy==1.26.3
+# Parameter-Efficient Fine-Tuning (LoRA)
+peft>=0.13.0
 
-# Evaluation
-rouge-score==0.1.2
-bert-score==0.3.13
-sacrebleu==2.3.1
-nltk==3.8.1
-spacy==3.7.2
+# Training optimization and multi-GPU support
+accelerate>=1.2.0
 
-# APIs
-openai==1.10.0
-youtube-transcript-api==0.6.1
-yt-dlp==2024.1.15
-openai-whisper==20231117
+# Optional: 4-bit/8-bit quantization (not used in main training)
+# bitsandbytes>=0.45.0
 
-# Embeddings
-sentence-transformers==2.3.1
-faiss-cpu==1.7.4
+# ==============================================================================
+# DATA PROCESSING
+# ==============================================================================
 
-# Utilities
-tqdm==4.66.1
-wandb==0.16.2
-tensorboard==2.15.1
-matplotlib==3.8.2
-seaborn==0.13.1
-pyyaml==6.0.1
+# HuggingFace datasets
+datasets>=3.2.0
 
-# Testing
-pytest==7.4.4
-pytest-cov==4.1.0
+# HDF5 file format for dataset storage
+h5py>=3.12.0
+
+# Data manipulation and analysis
+pandas>=2.2.0
+
+# Numerical computing
+numpy>=1.26.0
+
+# ==============================================================================
+# EVALUATION METRICS
+# ==============================================================================
+
+# ROUGE metrics for summarization evaluation
+rouge-score>=0.1.2
+
+# BERTScore for semantic similarity
+bert-score>=0.3.13
+
+# BLEU score for text generation
+sacrebleu>=2.4.0
+
+# Natural Language Toolkit
+nltk>=3.9.0
+
+# Advanced NLP library
+spacy>=3.8.0
+
+# ==============================================================================
+# API & DATA COLLECTION
+# ==============================================================================
+
+# OpenAI API for GPT-4o-mini summaries
+openai>=1.58.0
+
+# YouTube transcript extraction
+youtube-transcript-api>=0.6.2
+
+# YouTube video downloader
+yt-dlp>=2024.12.0
+
+# ==============================================================================
+# EMBEDDINGS & RETRIEVAL
+# ==============================================================================
+
+# Sentence embeddings for cross-modal pair mining
+sentence-transformers>=3.3.0
+
+# Efficient similarity search
+faiss-cpu>=1.9.0
+
+# ==============================================================================
+# EXPERIMENT TRACKING
+# ==============================================================================
+
+# Weights & Biases for experiment tracking
+wandb>=0.18.0
+
+# TensorBoard logging
+tensorboard>=2.18.0
+
+# ==============================================================================
+# VISUALIZATION & UTILITIES
+# ==============================================================================
+
+# Plotting and visualization
+matplotlib>=3.9.0
+
+# Statistical data visualization
+seaborn>=0.13.0
+
+# YAML configuration file parsing
+pyyaml>=6.0.0
+
+# Progress bars
+tqdm>=4.67.0
+
+# ==============================================================================
+# DEVELOPMENT & TESTING
+# ==============================================================================
+
+# Unit testing
+pytest>=8.3.0
+
+# Code formatting
+black>=24.0.0
+
+# Code linting (optional)
+# flake8>=7.1.0
+
+# Type checking (optional)
+# mypy>=1.13.0
+
+# ==============================================================================
+# NOTES
+# ==============================================================================
+#
+# RTX 5070 Ti Requirements:
+# - PyTorch nightly with CUDA 13.0 (or 12.8+)
+# - Compute capability sm_120 support
+# - Stable PyTorch releases do NOT support sm_120 as of December 2025
+#
+# Python Version:
+# - Python 3.11 recommended (10-60% faster than 3.10)
+# - Python 3.12+ may have compatibility issues with nightly builds
+#
+# Environment:
+# - Conda recommended for Python version management
+# - PyTorch installed via pip (nightly not available on conda)
+#
+# Memory Requirements:
+# - GPU: 16GB VRAM minimum
+# - RAM: 32GB recommended
+# - Storage: 500GB+ for datasets and checkpoints
+#
+# ==============================================================================
