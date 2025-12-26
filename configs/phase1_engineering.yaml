@@ -2,7 +2,7 @@
 model: mistralai/Mistral-7B-v0.1
 dtype: bfloat16
 phase: phase1
-domain: medical
+domain: engineering
 
 # LoRA Configuration
 lora_config:
@@ -44,7 +44,7 @@ lr_scheduler:
 
 # Data
 data_config:
-  dataset_path: data/datasets/medical.h5
+  dataset_path: data/datasets/engineering.h5
   data_mix:
     papers: 1.0
   num_workers: 8
@@ -61,4 +61,4 @@ logging:
   save_total_limit: 3
 
 # Output
-output_dir: checkpoints/phase1/medical
+output_dir: checkpoints/phase1/engineering
