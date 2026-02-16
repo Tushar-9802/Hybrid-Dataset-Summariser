@@ -1,251 +1,176 @@
+
 # Hybrid-Dataset Summariser
 
-Cross-modal learning framework addressing catastrophic forgetting in video summarization when fine-tuning language models on domain-specific text.
+Cross-modal learning framework addressing catastrophic forgetting in video summarization when fine-tuning language models on domain-specific text. Follow-up to our IMPACT 2025 (Springer) paper documenting 14–50% performance degradation in cross-modal LoRA transfer.
 
-## Problem Statement
+## Problem
 
-Fine-tuning Mistral-7B with LoRA on academic papers improves paper summarization performance but catastrophically degrades video summarization by 14-50%. This occurs due to the modality gap between academic text and video transcripts, causing domain-specific training to overwrite general video understanding capabilities.
+Fine-tuning Mistral-7B with LoRA on 25,000 academic papers improved paper summarization (+6–8% ROUGE-1) but degraded video summarization by 14–50% (ROUGE-2 worst hit at –36–50%). Error analysis showed adapters entangled domain knowledge with academic style conventions (passive voice +112%, nominalization +85%) in the rank-16 subspace, producing outputs like "this paper presents" for conversational video content.
 
-## Solution Approach
+Published:  *Cross-Modal Transfer Learning in Domain-Adaptive Video Summarization* , IMPACT 2025 (Springer), presented December 6, 2025.
 
-3-phase curriculum learning with cross-modal alignment to bridge the modality gap while preventing catastrophic forgetting through:
+## Solution
 
-* Enhanced LoRA configuration (rank 32, asymmetric learning rates)
-* Composite loss function (cross-entropy + contrastive + diversity + term preservation)
-* Elastic Weight Consolidation with replay buffer
-* Progressive curriculum: Papers (100%) -> Mixed (50/40/10) -> Videos (30/60/10)
+Six synergistic techniques targeting the identified failure modes:
 
-## Hardware Requirements
+**OPLoRA** — Orthogonal SVD projection (architectural, not loss penalty) preserving base model subspace. Prevents domain knowledge / style entanglement that caused the original failure.
 
-**Tested Configuration:**
+**LoRA+** — Asymmetric learning rates (η_B/η_A = 8) for faster convergence. Sweep planned over {4, 8, 16}.
 
-* GPU: NVIDIA RTX 5070 Ti (16GB VRAM, Blackwell architecture, sm_120)
-* CPU: AMD Ryzen 7 7800X3D (8C/16T)
-* RAM: 32GB DDR5
-* Storage: 1TB NVMe SSD
+**CrossCLR** — Contrastive loss aligning paper and video embeddings (τ=0.03, λ_intra=0.7).
 
-**Minimum Requirements:**
+**EWC** — Elastic Weight Consolidation preventing catastrophic forgetting (λ=200→400 progressive).
 
-* GPU: 16GB VRAM (RTX 4080, RTX 5070 Ti, A100-40GB)
-* CPU: 8+ cores
-* RAM: 32GB
-* Storage: 500GB SSD
+**Curriculum Learning** — 3-phase progressive mixing with D_gap gating and replay buffer.
 
-**Memory Budget (16GB VRAM):**
+**Monitoring** — Real-time ρ_k subspace interference tracking with adaptive k-scaling (16→128).
+
+## Domain & Dataset
+
+Locked to **Engineering/CS** (single domain). No medical or scientific data.
+
+| Source            | Count           | Details                                         |
+| ----------------- | --------------- | ----------------------------------------------- |
+| arXiv CS papers   | 2,400           | cs.AI, cs.CL, cs.LG, cs.CV, cs.RO, cs.SE, cs.DS |
+| YouTube CS videos | 1,200           | Lectures, conference talks, tutorials           |
+| Cross-modal pairs | 450             | SBERT-mined + GPT-4o-mini synthetic             |
+| **Total**   | **4,050** | 80/10/10 train/val/test split                   |
+
+## Training Schedule
 
 ```
-Mistral-7B (BF16):        14.0 GB
-LoRA Adapters (r=32):      0.85 GB
-LoRA Gradients:            0.85 GB
-AdamW Optimizer:           1.70 GB
-Batch Data (batch=3):      0.15 GB
-Gradient Checkpointing:   -0.60 GB
-Total:                    ~16.95 GB
+Phase 1 (2 epochs): 100% papers
+  → Establish domain vocabulary
+  → Compute Fisher Information Matrix at end
+  → Gate Phase 2 entry on D_gap < 0.7
 
-Training Config:
-- batch_size: 3
-- gradient_accumulation_steps: 6
-- effective_batch_size: 18
+Phase 2 (1 epoch): 50% papers + 40% videos + 10% cross-modal pairs
+  → Activate CrossCLR, EWC (λ=200), diversity, term preservation
+  → 10% replay buffer from Phase 1
+  → Monitor ρ_k; hot-swap to k=128 if > 0.5
+
+Phase 3 (1 epoch): 30% papers + 60% videos + 10% cross-modal pairs
+  → EWC λ → 400
+  → Final specialization
 ```
+
+## Targets
+
+| Metric          | Baseline (IMPACT 2025)               | Target           |
+| --------------- | ------------------------------------ | ---------------- |
+| Video ROUGE-1   | 0.347 (base) / 0.272 (degraded LoRA) | ≥ 0.37          |
+| Paper ROUGE-1   | 0.333 (LoRA)                         | ≥ 0.33 (retain) |
+| Passive voice % | 31.4% (LoRA) / 14.8% (base)          | ≤ 16%           |
+
+## Hardware
+
+| Component | Spec                                             |
+| --------- | ------------------------------------------------ |
+| GPU       | NVIDIA RTX 5070 Ti (16GB VRAM, Blackwell sm_120) |
+| CPU       | AMD Ryzen 7 7800X3D (8C/16T)                     |
+| RAM       | 32GB DDR5                                        |
+| Storage   | 1TB NVMe SSD                                     |
+
+**VRAM Budget (BF16 training):**
+
+```
+Mistral-7B (BF16):          14.0 GB
+LoRA adapters (r=32):        0.85 GB
+Gradients (checkpointed):    0.40 GB
+8-bit AdamW (bitsandbytes):  0.85 GB
+Batch data (batch=3):        0.15 GB
+Total:                      ~16.25 GB
+```
+
+8-bit AdamW from bitsandbytes is required — standard AdamW overflows 16GB. Gradient checkpointing mandatory.
 
 ## Environment Setup
 
-### Current Installation
-
-**Platform:** Windows 11
-
-**Python:** 3.11.14 (via Miniconda3)
-
-**Environment Manager:** Conda
-
-**PyTorch:** 2.7.0.dev (nightly build)
-
-**CUDA:** 13.0
-
-### Why These Specific Versions
-
-**Python 3.11:** Performance improvements (10-60% faster than 3.10), better error messages, full ML library support.
-
-**PyTorch Nightly with CUDA 13.0:** RTX 5070 Ti (Blackwell architecture) requires compute capability sm_120, which is only supported in PyTorch nightly builds with CUDA 12.8+. Stable PyTorch releases (as of December 2025) do not include sm_120 support.
-
-**Conda:** Provides Python version isolation and package management. Note that PyTorch itself is installed via pip due to nightly build requirements.
-
-### Installation Instructions
-
-**Step 1: Install Miniconda**
-Download from: https://docs.conda.io/en/latest/miniconda.html
-
-**Step 2: Create Environment**
+**Python:** 3.11 (Miniconda)
+**PyTorch:** Nightly with CUDA 13.0 (RTX 5070 Ti requires sm_120)
+**JS Runtime:** Deno (required by yt-dlp since 2025.11.12 for YouTube downloads)
 
 ```bash
 conda create -n hybrid-video python=3.11 -y
 conda activate hybrid-video
-```
 
-**Step 3: Install PyTorch Nightly**
-
-```bash
-# RTX 5070 Ti requires CUDA 13.0 for sm_120 support
 pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu130
-```
-
-**Step 4: Verify GPU**
-
-```bash
-python -c "import torch; print('PyTorch:', torch.__version__); print('CUDA:', torch.cuda.is_available()); print('GPU:', torch.cuda.get_device_name(0))"
-```
-
-Expected output:
-
-```
-PyTorch: 2.7.0.dev20250310+cu130
-CUDA: True
-GPU: NVIDIA GeForce RTX 5070 Ti
-```
-
-**Step 5: Install Dependencies**
-
-```bash
 pip install -r requirements.txt
-```
 
-**Step 6: Download NLTK Data**
-
-```bash
-python -c "import nltk; nltk.download('punkt'); nltk.download('punkt_tab')"
+# Deno for YouTube data collection
+winget install DenoLand.Deno
 ```
 
 ## Project Structure
 
 ```
 Hybrid-Dataset-Summariser/
-├── configs/              # Training configurations (Phase 1/2/3)
-├── src/
-│   ├── models/           # LoRA configuration wrappers
-│   ├── data/             # Curriculum dataloader
-│   ├── losses/           # Composite loss implementation
-│   ├── training/         # Training loop with EWC
-│   └── evaluation/       # Metrics and statistical tests
-├── scripts/              # Data collection and preprocessing
-├── data/                 # Datasets (gitignored)
-├── checkpoints/          # Model checkpoints (gitignored)
-├── results/              # Evaluation outputs
-└── docs/                 # Documentation
+├── configs/
+│   └── phase1_engineering.yaml
+├── data/raw/
+│   ├── papers/           # arXiv CS papers (2,400)
+│   └── videos/           # YouTube audio + meta.json (1,200)
+├── logs/
+│   └── wandb/
+├── src/data/
+│   ├── hf_arxiv_dataset.py    # [A1] Paper collection from HuggingFace
+│   ├── yt_audio_collector.py  # [A2] YouTube audio download
+│   └── transcribe.py          # [A2] Local Whisper transcription
+├── cookies.txt           # YouTube auth (gitignored)
+├── environment.yml
+├── requirements.txt
+└── README.md
 ```
 
-## Technical Specifications
+Additional directories (checkpoints, src/models, src/losses, src/training, src/evaluation, results, paper) will be created as the project progresses through execution phases.
 
-### LoRA Configuration
+## Technical Configuration
 
 ```yaml
-rank: 32
-alpha: 64
-dropout: 0.1
-target_modules:
-  - q_proj, k_proj, v_proj, o_proj  # Attention
-  - gate_proj, up_proj, down_proj   # MLP
-learning_rates:
-  lora_A: 1e-4   # Asymmetric (LoRA+)
-  lora_B: 2e-4
-trainable_params: ~85M (<1% of Mistral-7B)
+lora:
+  rank: 32
+  alpha: 64
+  dropout: 0.1
+  target_modules: [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj]
+
+oplora:
+  implementation: projection    # Architectural, NOT loss penalty
+  projection_rank: 16           # Fallback to 128 if ρ_k > 0.5
+
+lora_plus:
+  lr_A: 1.0e-4
+  lr_B: 8.0e-4                 # λ = 8
+
+losses:
+  ce_weight: 1.0
+  crossclr_weight: 0.3         # τ=0.03, γ=0.9
+  diversity_weight: 0.2
+  term_preservation_weight: 0.4
+  # OPLoRA is architectural (forward pass), not a loss term
+  # EWC added in Phase 2 (λ=200) and Phase 3 (λ=400)
 ```
 
-### Loss Function
+## Publication Target
 
-```
-L_total = L_CE + 0.3*L_contrastive + 0.2*L_diversity + 0.4*L_term
-
-Where:
-- L_CE: Cross-entropy for generation
-- L_contrastive: CrossCLR-inspired cross-modal alignment
-- L_diversity: Shannon entropy (mode collapse prevention)
-- L_term: Technical term preservation (domain knowledge retention)
-```
-
-### Training Phases
-
-```
-Phase 1 (Epoch 0.0-0.5): 100% papers
-- Domain vocabulary establishment
-- Fisher Information Matrix computation
-
-Phase 2 (Epoch 0.5-1.5): 50% papers + 40% videos + 10% cross-modal
-- Cross-modal alignment with EWC (lambda=400)
-- 10% replay buffer
-
-Phase 3 (Epoch 1.5-2.5): 30% papers + 60% videos + 10% cross-modal
-- Video specialization
-- Continued EWC + replay
-```
-
-## Usage
-
-### Training
-
-```bash
-# Phase 1: Domain establishment
-python train.py --config configs/phase1_medical.yaml
-
-# Phase 2: Cross-modal alignment
-python train.py --config configs/phase2_medical.yaml
-
-# Phase 3: Video specialization
-python train.py --config configs/phase3_medical.yaml
-```
-
-### Evaluation
-
-```bash
-python evaluate.py --checkpoint checkpoints/phase3/medical/final \
-                   --test-set data/test/medical.h5
-```
+**Venue:** Springer Multimedia Systems or IEEE Transactions on Multimedia
+**Format:** 10–14 page journal paper with 8–10 ablation configurations
+**Timeline:** Submit when ready (no hard deadline)
 
 ## Research Foundation
 
-This work builds on:
-
-* **CrossCLR** (ICCV 2021): Cross-modal contrastive learning methodology
-* **MoNA** (ICML 2024): Modality gap formalization and meta-learning
-* **EWC on Gemma2** (2025): Catastrophic forgetting prevention for LLMs
-* **LoRA+** (2024): Asymmetric learning rates for parameter-efficient fine-tuning
-* **LfVS** (CVPR 2024): LLM-based video summarization benchmarks
-
-Full bibliography available in `docs/PAPER_LINKS.md`
-
-## Troubleshooting
-
-### GPU Not Detected
-
-```bash
-# Check NVIDIA driver
-nvidia-smi
-
-# Reinstall PyTorch with correct CUDA version
-pip uninstall torch torchvision
-pip install --pre torch torchvision --index-url https://download.pytorch.org/whl/nightly/cu130
-```
-
-### Out of Memory
-
-Reduce batch size in configuration:
-
-```yaml
-batch_size: 2  # from 3
-gradient_accumulation_steps: 9  # from 6
-```
-
-### RTX 5070 Ti Compatibility
-
-The RTX 5070 Ti requires PyTorch nightly with CUDA 13.0 (or 12.8+). Stable PyTorch releases do not support compute capability sm_120 as of December 2025.
+| Paper                | Contribution                                    | Key Parameters                |
+| -------------------- | ----------------------------------------------- | ----------------------------- |
+| CrossCLR (ICCV 2021) | Cross-modal contrastive learning                | τ=0.03, λ_intra=0.7, γ=0.9 |
+| OPLoRA (2024)        | Orthogonal projection for subspace preservation | k=16/128                      |
+| LoRA+ (2024)         | Asymmetric learning rates                       | η_B/η_A = 8                 |
+| EWC on Gemma2 (2025) | Forgetting prevention for LLMs                  | λ=200–400                   |
+| MoNA (ICML 2024)     | Modality gap formalization                      | D_gap monitoring              |
+| LfVS (CVPR 2024)     | LLM-based video summarization benchmarks        | Quality filters               |
 
 ## License
 
-MIT License - See LICENSE file for details
-
-## Contact
-
-For questions or issues, please open a GitHub issue.
+MIT License — see LICENSE file.
 
 ---
 
-Last updated: December 25, 2025
+Last updated: February 14, 2026
