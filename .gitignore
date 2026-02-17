@@ -41,6 +41,8 @@ data/raw/**
 data/processed/**
 data/validated/**
 data/datasets/*.h5
+data/quarantine/**
+data/hdf5/**
 !data/lexicons/
 !data/test/.gitkeep
 

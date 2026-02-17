@@ -1,5 +1,5 @@
 """
-transcribe.py — Local Whisper Transcription [A2]
+transcribe.py — Local Whisper Transcription
 Transcribes validated audio WAVs using OpenAI Whisper (large-v3).
 
 Optimized for RTX 5070 Ti (16GB VRAM):

@@ -1,5 +1,5 @@
 """
-hf_arxiv_dataset.py  [A1]
+hf_arxiv_dataset.py
 Pulls engineering/CS papers from ccdv/arxiv-summarization (HuggingFace).
 No API key. No rate limits. Streaming — low RAM usage.
 

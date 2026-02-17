@@ -1,5 +1,5 @@
 """
-yt_audio_collector.py — Engineering Audio Collector [A2]
+yt_audio_collector.py — Engineering Audio Collector
 Fulfills the "Hybrid-Dataset Summariser" specification.
 Downloads high-fidelity audio for local OpenAI Whisper transcription.
 
@@ -23,7 +23,7 @@ from typing import Optional
 import yt_dlp
 from tqdm import tqdm
 
-# ── CONFIG (Fulfills Specification [A2] for Audio Collection) ───────────────
+# ── CONFIG (Fulfills Specification for Audio Collection) ───────────────
 TARGET = 1200
 OUTPUT_DIR = Path("data/raw/videos")
 LOG_DIR = Path("logs")
