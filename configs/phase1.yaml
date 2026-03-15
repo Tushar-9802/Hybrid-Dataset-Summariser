@@ -1,0 +1,37 @@
+inherits: base.yaml
+
+phase: 1
+epochs: 3
+
+lora_plus:
+  lr_A: 1.0e-4
+  lr_B: 8.0e-4
+
+optimizer:
+  type: adamw_8bit
+  weight_decay: 0.01
+
+scheduler:
+  type: cosine
+  warmup_ratio: 0.05
+  min_lr_ratio: 0.1
+
+curriculum:
+  paper_ratio: 1.0
+  video_ratio: 0.0
+  pair_ratio: 0.0
+
+losses:
+  ce_weight: 1.0
+  diversity_weight: 0.0
+  terminology_weight: 0.0
+  crossclr_weight: 0.0
+  ewc_lambda: 0
+
+oplora:
+  enabled: false
+
+gate:
+  d_gap_threshold: -0.10
+  metric_split: videos
+  

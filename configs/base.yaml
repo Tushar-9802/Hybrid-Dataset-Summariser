@@ -1,0 +1,37 @@
+model:
+  name: mistralai/Mistral-7B-v0.1
+  quantization: nf4
+  compute_dtype: bfloat16
+  double_quant: true
+
+lora:
+  rank: 32
+  alpha: 64
+  dropout: 0.1
+  target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+hardware:
+  batch_size: 3
+  gradient_accumulation_steps: 8
+  max_grad_norm: 1.0
+  max_total_len: 1280
+  dataloader_workers: 0
+  pin_memory: true
+
+data:
+  hdf5_path: data/hdf5/engineering.h5
+
+monitoring:
+  log_every: 10
+  eval_every: 500
+  checkpoint_every: 500
+  use_wandb: true
+
+seed: 42

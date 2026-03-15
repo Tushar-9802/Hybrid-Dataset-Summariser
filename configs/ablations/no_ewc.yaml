@@ -1,0 +1,11 @@
+# Ablation A2: Full system minus EWC
+# Tests whether EWC contributes to forgetting prevention
+
+inherits: ../phase3.yaml
+
+losses:
+  ce_weight: 1.0
+  diversity_weight: 0.2
+  terminology_weight: 0.4
+  crossclr_weight: 0.3
+  ewc_lambda: 0

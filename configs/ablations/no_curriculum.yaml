@@ -1,0 +1,45 @@
+# Ablation A6: All methods active from step 1 (no curriculum phasing)
+# Tests whether gradual introduction matters
+
+inherits: ../base.yaml
+
+phase: 1
+epochs: 5
+
+lora_plus:
+  lr_A: 5.0e-5
+  lr_B: 4.0e-4
+
+optimizer:
+  type: adamw_8bit
+  weight_decay: 0.01
+
+scheduler:
+  type: cosine
+  warmup_ratio: 0.05
+  min_lr_ratio: 0.1
+
+curriculum:
+  paper_ratio: 0.40
+  video_ratio: 0.50
+  pair_ratio: 0.10
+  replay_ratio: 0.0
+
+losses:
+  ce_weight: 1.0
+  diversity_weight: 0.2
+  terminology_weight: 0.4
+  crossclr_weight: 0.3
+  ewc_lambda: 300
+
+oplora:
+  enabled: true
+  k: 16
+  rho_k_threshold: 0.5
+
+crossclr:
+  tau: 0.03
+  lambda_intra: 0.75
+  kappa: 3.5e-4
+  queue_size: 3000
+  embed_dim: 256

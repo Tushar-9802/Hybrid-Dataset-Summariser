@@ -1,0 +1,37 @@
+# Ablation A1: Vanilla LoRA — no curriculum, no OPLoRA, no EWC, no CrossCLR
+# Standard LoRA fine-tuning on mixed data (strongest baseline to beat)
+
+inherits: ../base.yaml
+
+phase: 1
+epochs: 3
+
+lora_plus:
+  lr_A: 1.0e-4
+  lr_B: 1.0e-4    # symmetric LR (no LoRA+)
+
+optimizer:
+  type: adamw_8bit
+  weight_decay: 0.01
+
+scheduler:
+  type: cosine
+  warmup_ratio: 0.05
+  min_lr_ratio: 0.1
+
+# Mix all data from start (no curriculum)
+curriculum:
+  paper_ratio: 0.55
+  video_ratio: 0.35
+  pair_ratio: 0.10
+  replay_ratio: 0.0
+
+losses:
+  ce_weight: 1.0
+  diversity_weight: 0.0
+  terminology_weight: 0.0
+  crossclr_weight: 0.0
+  ewc_lambda: 0
+
+oplora:
+  enabled: false

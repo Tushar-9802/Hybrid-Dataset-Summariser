@@ -1,0 +1,7 @@
+# Ablation A3: Full system minus OPLoRA
+# Tests whether orthogonal projection contributes
+
+inherits: ../phase3.yaml
+
+oplora:
+  enabled: false

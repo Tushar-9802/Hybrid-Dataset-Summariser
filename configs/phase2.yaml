@@ -1,0 +1,43 @@
+inherits: base.yaml
+
+phase: 2
+epochs: 1
+resume_from: checkpoints/phase1/final
+
+lora_plus:
+  lr_A: 5.0e-5
+  lr_B: 4.0e-4
+
+optimizer:
+  type: adamw_8bit
+  weight_decay: 0.01
+
+scheduler:
+  type: cosine
+  warmup_ratio: 0.05
+  min_lr_ratio: 0.1
+
+curriculum:
+  paper_ratio: 0.50
+  video_ratio: 0.40
+  pair_ratio: 0.10
+  replay_ratio: 0.10
+
+losses:
+  ce_weight: 1.0
+  diversity_weight: 0.2
+  terminology_weight: 0.4
+  crossclr_weight: 0.0
+  ewc_lambda: 200
+
+oplora:
+  enabled: true
+  k: 16
+  rho_k_threshold: 0.5
+
+ewc:
+  state_path: checkpoints/phase1/final
+
+gate:
+  d_gap_threshold: -0.05
+  metric_split: videos

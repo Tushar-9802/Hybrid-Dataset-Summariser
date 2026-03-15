@@ -1,0 +1,8 @@
+# Ablation A5: Full system with symmetric LR (no LoRA+)
+# Tests whether asymmetric learning rates contribute
+
+inherits: ../phase3.yaml
+
+lora_plus:
+  lr_A: 1.0e-4
+  lr_B: 1.0e-4

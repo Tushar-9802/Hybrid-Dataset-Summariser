@@ -1,0 +1,7 @@
+{
+    "title": "Hybrid-Dataset Summariser",
+    "id": "tusharjaju/hybrid-dataset-summariser-crossmodal",
+    "licenses": [{"name": "MIT"}],
+    "description": "4,324 CS samples (2,368 arXiv papers + 738 YouTube lecture transcripts + 1,218 SBERT-mined cross-modal pairs) tokenized for Mistral-7B. HDF5 format with 80/10/10 splits. Built for cross-modal summarization research.",
+    "keywords": ["nlp", "summarization", "cross-modal", "mistral", "lora"]
+  }
