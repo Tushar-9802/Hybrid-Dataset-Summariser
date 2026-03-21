@@ -6,7 +6,7 @@ Cross-modal learning framework preventing catastrophic forgetting in video summa
 
 | System | Video R-1 | Video R-2 | Video PVR% | CMC | Paper R-1 |
 |--------|-----------|-----------|------------|-----|-----------|
-| Zero-shot Mistral-7B | 0.263 | 0.032 | 9.9 | 0.356 | 0.320 |
+| Zero-shot Mistral-7B | 0.263 | 0.032 | 10.0 | 0.356 | 0.320 |
 | Vanilla LoRA (no protection) | 0.315 | 0.060 | 18.4 | 0.470 | 0.451 |
 | IMPACT 2025 naive LoRA | 0.272 | 0.060 | 31.4 | — | 0.333 |
 | **Phase 1** (LoRA+) | 0.305 | 0.052 | 15.9 | 0.474 | **0.429** |
@@ -14,6 +14,17 @@ Cross-modal learning framework preventing catastrophic forgetting in video summa
 | **Phase 3** (full framework) | **0.417** | **0.119** | 14.1 | **0.531** | 0.309 |
 
 All improvements statistically significant (p < 0.005, paired t-test). Video R-1 +58%, R-2 +272% vs baseline. PVR held at 14.1% vs 31.4% catastrophic (IMPACT 2025).
+
+### Component Ablations
+
+| Configuration | Video R-1 | Video R-2 | BERTScore | PVR% | Nom.% |
+|--------------|-----------|-----------|-----------|------|-------|
+| Full framework | 0.417 | 0.119 | 0.151 | 14.1 | 6.5 |
+| - EWC | **0.438** | **0.137** | **0.169** | **11.0** | 6.5 |
+| - OPLoRA | 0.389 | 0.114 | 0.104 | 9.8 | 10.5 |
+| Vanilla LoRA | 0.315 | 0.060 | 0.091 | 18.4 | — |
+
+**Key finding:** Curriculum phasing is the primary mechanism (~80% of improvement over vanilla LoRA). OPLoRA provides semantic quality preservation (BERTScore +45%) and nominalization control (6.5% vs 10.5%). EWC at lambda=400 over-constrains — removing it improves all video metrics.
 
 ## Problem
 
@@ -23,15 +34,15 @@ Published: *Cross-Modal Transfer Learning in Domain-Adaptive Video Summarization
 
 ## Solution
 
-Five-method curriculum framework targeting identified failure modes:
+Curriculum-based framework with progressive method activation:
 
 **Phase 1** (3 epochs, 100% papers): LoRA+ asymmetric learning rates (eta_B/eta_A = 8) for domain knowledge acquisition. Fisher Information Matrix computed at exit.
 
-**Phase 2** (1 epoch, 50/40/10 papers/videos/pairs): OPLoRA orthogonal projection (k=16) preserving base model subspace + EWC Fisher regularization (lambda=200) preventing catastrophic forgetting + diversity and terminology auxiliary losses + 10% replay buffer.
+**Phase 2** (1 epoch, 50/40/10 papers/videos/pairs): OPLoRA orthogonal projection (k=16) preserving base model subspace + EWC Fisher regularization (lambda=200) + diversity and terminology auxiliary losses + 10% replay buffer.
 
 **Phase 3** (1 epoch, 30/60/10): CrossCLR contrastive alignment (tau=0.03) + EWC lambda=400 + full composite loss. Video-focused specialization.
 
-Phase transitions gated by D_gap composite metric on video validation split.
+Phase transitions gated by D_gap composite metric on video validation split. Ablations show curriculum phasing is the dominant intervention; protection mechanisms provide secondary gains.
 
 ## Dataset
 
@@ -147,7 +158,8 @@ Hybrid-Dataset-Summariser/
 ├── scripts/
 │   ├── train.py                 # Training entry point
 │   ├── evaluate.py              # Evaluation harness
-│   └── generate_figures.py      # Publication figures
+│   ├── generate_figures.py      # Publication figures (fig1-fig5)
+│   └── generate_fig6.py         # Ablation comparison figure
 ├── src/
 │   ├── training/
 │   │   ├── dataset.py           # HDF5 DataLoader + CurriculumSampler
@@ -161,7 +173,8 @@ Hybrid-Dataset-Summariser/
 │   ├── processing/              # Data pipeline scripts
 │   └── data/                    # Collection + transcription
 ├── results/
-│   ├── baseline/, phase1/, phase2/, phase3/, abl_vanilla/
+│   ├── baseline/, phase1/, phase2/, phase3/
+│   ├── abl_vanilla/, abl_no_ewc/, abl_no_oplora/
 ├── checkpoints/
 │   ├── phase1/final/, phase2/final/, phase3/final/
 │   └── svd_cache/
@@ -210,4 +223,4 @@ MIT License
 
 ---
 
-Last updated: March 15, 2026
+Last updated: March 21, 2026

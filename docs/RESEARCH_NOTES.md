@@ -5,11 +5,9 @@
 **Cross-modal Contrastive Learning For Multi-modal Video Representations**
 
 ### Core Contribution
-
 Inter + intra-modality contrastive learning with false negative pruning.
 
 ### Key Formulas
-
 ```
 L(xi) = -log[δ(xi,yi) / (δ(xi,yi) + Σ_inter + λΣ_intra)]
 δ(xi,yj) = exp(fx(xi)^T·fy(yj) / τ)
@@ -18,7 +16,6 @@ w(xi) = exp(C(xi)/κ)  [loss weighting]
 ```
 
 ### Hyperparameters
-
 * τ = 0.03 (temperature)
 * γ = 0.9 (connectivity threshold)
 * λ = 0.7-0.8 (intra-modality weight)
@@ -26,25 +23,15 @@ w(xi) = exp(C(xi)/κ)  [loss weighting]
 * Queue size = 3000-5000
 
 ### Results
-
 * Youcook2 R@1: 19.5% (text→video)
 * CIDEr-D: 61.10 (captioning)
 
-### Using for Project
-
-* Contrastive loss with inter + intra-modality terms
-* Connectivity-based false negative pruning
-* Queue mechanism for reliable statistics
-* Loss weighting by sample influence
-
 ### Actual Outcome
-
-* Implemented in Phase 3 with τ=0.03, λ_intra=0.75, κ=3.5e-4, queue_size=3000
-* **NaN on some pair batches** — queue initialized with random embeddings, denominator hit zero in `log(positive/denominator)` before queue filled with meaningful representations
-* **Fix applied:** `queue_snapshot = self.queue.clone().detach()` before computation (gradient checkpointing compatibility)
-* **Full fix needed (future work):** warmup queue for N steps before enabling contrastive loss
-* Despite partial instability, CMC improved 0.474→0.531 (+12%)
-* Scheduler param group bug: CrossCLR projection head added 4th param group after scheduler created for 3 — fixed by moving `optimizer.add_param_group()` before `setup_scheduler()`
+* Phase 3 contrastive loss with momentum queue (size=3000)
+* τ=0.03, λ_intra=0.75, κ=3.5e-4
+* NaN on some pair batches due to queue initialization — queue snapshot fix applied
+* CMC improved 0.474→0.531 (+12%)
+* Scheduler param group bug: CrossCLR projection head added 4th param group after scheduler created — fixed
 
 ---
 
@@ -53,44 +40,19 @@ w(xi) = exp(C(xi)/κ)  [loss weighting]
 **Learning Modality Knowledge Alignment for Cross-Modality Transfer**
 
 ### Core Contribution
-
 Two-stage meta-learning measuring and minimizing modality gap.
 
 ### Key Formulas
-
 ```
 D(Ms,Mt) = inf_{π,B} d(P(Y^s_{π,B}|X̂), P(Y^t|X̂))
 L'_outer = λL_outer + L_inner
-L_outer = L_align + L_uniform
 Gradient alignment: min L_inner - λα(∇L_outer)·(∇L_inner)
 ```
 
-### Hyperparameters
-
-* λ = 0.3-0.5 (source/target balance)
-* Stage 1: 5-10 epochs
-* LR = 3e-5
-
-### Results
-
-* NAS-Bench-360: SOTA 9/10 tasks
-* CIFAR-100: 6.48% error
-
-### Using for Project
-
-* Modality gap measurement D(M_paper, M_video)
-* Gradient alignment principle validates EWC
-* Davies-Bouldin index for knowledge preservation
-* Linear probe accuracy tracking
-
 ### Actual Outcome
-
-* Used in **monitoring role only** — not a training loss
-* D_gap metric adapted for phase gating with custom weights: ROUGE w=1.0, BERTScore w=1.5, PVR/NR w=0.75 (negated for style metrics where increase = degradation)
+* Used in monitoring role only — not a training loss
+* D_gap metric adapted for phase gating: ROUGE w=1.0, BERTScore w=1.5, PVR/NR w=0.75
 * D_gap values: Phase 1 exit +0.55, Phase 2 exit +1.26, Phase 3 final +1.96
-* Phase gating thresholds (D_gap > -0.10 for Phase 2, > -0.05 for Phase 3) passed easily — all positive
-* Davies-Bouldin index and linear probe accuracy: **not implemented** (cut for time, not critical path)
-* Gradient alignment principle validated indirectly — EWC preserves high-Fisher parameters which aligns with MoNA's theoretical framework
 
 ---
 
@@ -99,45 +61,19 @@ Gradient alignment: min L_inner - λα(∇L_outer)·(∇L_inner)
 **Efficient Low Rank Adaptation of Large Models**
 
 ### Core Contribution
-
 Asymmetric learning rates ηB = λ·ηA for efficient feature learning.
 
 ### Key Theory
-
 ```
 ΔZ_B = B·ΔZ_A + ΔB·Z_A + ΔB·ΔZ_A
-       \__δ¹__/   \__δ²__/   \__δ³__/
 Efficiency: δ¹ = δ² = Θ(1) requires η_A = Θ(n^{-1}), η_B = Θ(1)
-Optimal: η_B/η_A = Θ(n), practical λ ∈ {4,8,16}
 ```
 
-### Hyperparameters
-
-* λ = 16 (RoBERTa), λ = 2-4 (LLaMA)
-* r ∈ {4,8,16,64}, α ∈ {8,16}
-
-### Results
-
-* MMLU: +1.3% (44.0% vs 42.7%)
-* 2× convergence speedup
-* Harder tasks show larger gains
-
-### Using for Project
-
-* Asymmetric learning rates: ηA = 1e-4, ηB = 8e-4
-* Monitor δ¹/δ² norms (target: both Θ(1))
-* Lambda sweep: {4, 8, 16} in Week 5
-
 ### Actual Outcome
-
-* λ=8 used across all phases (no sweep needed — worked first try)
-* 224 A param groups + 224 B param groups via bitsandbytes AdamW8bit
-* Phase 1: lr_A=1e-4, lr_B=8e-4 → halved each transition
-* Phase 2: lr_A=5e-5, lr_B=4e-4
-* Phase 3: lr_A=2.5e-5, lr_B=2e-4
-* δ¹/δ² norm monitoring: **not implemented** (cut for time)
-* Phase 1 loss dropped 2.5→1.4 in 234 steps (3 epochs) — convergence speed consistent with paper's 2× claim
-* Paper R-1 jumped 0.320→0.429 (+34%) in Phase 1 alone — strong domain acquisition
+* λ=8 used across all phases (no sweep needed)
+* Phase 1: lr_A=1e-4, lr_B=8e-4, halved each transition
+* Phase 1 loss dropped 2.5→1.4 in 234 steps — convergence speed consistent with 2× claim
+* Paper R-1 jumped 0.320→0.429 (+34%) in Phase 1 alone
 
 ---
 
@@ -146,45 +82,26 @@ Optimal: η_B/η_A = Θ(n), practical λ ∈ {4,8,16}
 **Orthogonal Projection LoRA Prevents Catastrophic Forgetting**
 
 ### Core Contribution
-
 Double-sided orthogonal projection preserves top-k singular directions.
 
 ### Key Theory
-
 ```
 ΔW = PL·BA·PR
 PL = I - Uk·Uk^T, PR = I - Vk·Vk^T
-Guarantee: Uk^T·W'·Vk = Σk (top-k preserved)
 ρk = ||Qk·ΔW||²F / ||ΔW||²F  [alignment metric]
 ```
 
-### Hyperparameters
-
-* k ∈ {16, 128}
-* r = 32-64
-* Overhead: 19% training time
-
-### Results
-
-* LLaMA-2 7B: +5-7% forgetting resistance
-* ρk < 0.003 (minimal interference)
-* SOTA on commonsense, math, code tasks
-
-### Using for Project
-
-* Start k=16, scale to k=128 if ρk > 0.5
-* One-time SVD: 5.5 min, cached
-* Monitor ρk every 100 steps in Phase 2-3
-* Target: ρk < 0.3
-
 ### Actual Outcome
+* Left-projection only (not full double-sided) due to VRAM
+* k=16, SVD cached in 5.5 min for 224 modules
+* ρk never exceeded 0.5 — adaptive k scaling not triggered
+* dtype fix: bitsandbytes uint8→float32 in hook
+* dimension fix: 3D tensor (B,T,D) broadcasting
 
-* **Left-projection only** — not full double-sided (VRAM constraint). Formula: `ΔW' = ΔW - Uk(Uk^T ΔW)`
-* k=16, SVD cached in 5.5 min for 224 modules in `checkpoints/svd_cache/`
-* **ρk never exceeded 0.5** — adaptive k scaling (16→128) was not triggered during actual training
-* Phase 2 PVR dropped to 10.2% (from 15.9%) — confirms subspace protection working
-* **dtype fix required:** bitsandbytes LoRA layers output uint8 tensors. Hook crashes on `matmul(Byte, Float)`. Fix: `out_f = output.float(); Uk_f = Uk_local.float()` → project → cast back
-* **dimension fix required:** hook received 3D tensor (B, T, D) but matmul assumed 2D. Fix: `coeffs = out_f @ Uk_f; proj = out_f - coeffs @ Uk_f.T` (broadcasting handles batch dim)
+### Ablation Finding (NEW)
+* **Removing OPLoRA: Video R-1 drops 0.417→0.389 (-7%), BERTScore drops 31% (0.151→0.104), nominalization jumps 6.5%→10.5% (+61%)**
+* PVR paradoxically improves (14.1%→9.8%) — OPLoRA prevents nominalization contamination specifically, not passive voice
+* OPLoRA provides meaningful but secondary contribution; curriculum phasing is the primary mechanism
 
 ---
 
@@ -192,36 +109,9 @@ Guarantee: Uk^T·W'·Vk = Σk (top-k preserved)
 
 **Weight-Decomposed Low-Rank Adaptation**
 
-### Core Contribution
-
-Decompose weights into magnitude + direction, apply LoRA only to direction.
-
-### Key Formula
-
-```
-W = m · (V/||V||c) = ||W||c · (W/||W||c)
-DoRA: W' = m' · (V + ΔV)/||V + ΔV||c
-```
-
-### Results
-
-* LLaMA-7B: +3.7% vs LoRA (commonsense)
-* VL-BART: +0.9% (image-text)
-* Shows FT-like learning patterns
-
-### Using for Project
-
-* **Optional enhancement** if LoRA+ insufficient
-* Magnitude-only tuning for MLP layers
-* Expected gain: +2-4%
-* VRAM cost: +0.2GB
-
 ### Actual Outcome
-
-* **NOT implemented — dropped for VRAM constraints**
-* OPLoRA addresses the same forgetting concern more directly and was sufficient
-* Listed as future work in paper
-* +0.2GB overhead would have pushed peak VRAM from 11.3GB to ~11.5GB (still within 16GB but added complexity not justified given results)
+* NOT implemented — dropped for VRAM constraints
+* OPLoRA addresses the same concern more directly
 
 ---
 
@@ -229,259 +119,65 @@ DoRA: W' = m' · (V + ΔV)/||V + ΔV||c
 
 **Overcoming Catastrophic Forgetting in Neural Networks**
 
-### Core Contribution
-
-Fisher information weighted quadratic penalty on parameters.
-
 ### Key Formula
-
 ```
 L_EWC = λ_ewc · Σ_i [F_i · (θ_i - θ*_i)²]
-F_i = E[(∂log p(y|x,θ) / ∂θ_i)²]
 ```
 
-### Using for Project
-
-* λ_ewc = 200 (Phase 2), 400 (Phase 3)
-* Compute Fisher after Phase 1
-* Diagonal approximation (efficient)
-
 ### Actual Outcome
+* λ_ewc = 200 (Phase 2), 400 (Phase 3)
+* Fisher: 448 param matrices, 83.9M entries, 100% nonzero
+* Highest Fisher: v_proj layers (max=0.052)
+* OOM fix: gradient checkpointing ON, batch_size=1, max_total_len=512, n_samples=100, 37 seconds
 
-* λ_ewc = 200 (Phase 2), 400 (Phase 3) — as planned
-* Fisher computed at Phase 1 exit: 448 param matrices (224 A + 224 B), 83,886,080 entries
-* **100% nonzero Fisher values** — every parameter contributed
-* Highest Fisher: v_proj layers (max=0.052) — value projections most task-critical
-* A matrices > B matrices in Fisher magnitude — consistent with LoRA+ theory (A learns features, B projects)
-* **Critical OOM fix:** Disabling gradient checkpointing for Fisher backward caused OOM (28.9GB on 16GB GPU). Fix: keep gradient checkpointing ON, batch_size=1, max_total_len=512, n_samples=100. Completed in 37 seconds.
-* EWC penalty visible in training loss curves — loss floor higher in Phase 2-3 than Phase 1 due to regularization (expected and correct)
+### Ablation Finding (NEW)
+* **Removing EWC IMPROVES all video metrics: R-1 0.417→0.438 (+5%), R-2 0.119→0.137 (+15%), PVR 14.1%→11.0%, BERTScore 0.151→0.169**
+* λ=400 over-constrains — prevents model from fully adapting to video content
+* When OPLoRA already preserves subspace, EWC regularization is redundant and harmful
+* Future work: explore lower λ schedules or adaptive decay
 
 ---
 
 ## Paper 7: LfVS (CVPR 2024)
-
-**Learning from Long-Form Video for Summarization**
-
-### Core Contribution
-
-LLM-based extractive summarization using pseudo-ground truth.
-
-### Key Insights
-
-* Text encoder improves video summarization (+2.3% F1)
-* Cross-modal attention critical
-* Pretraining on large-scale pseudo-labels transfers
-
-### Using for Project
-
-* Validates text+video multi-modal approach
-* Cross-attention between paper/video embeddings
-* Evaluation metrics: ROUGE, CIDEr-D, BERTScore
-
-### Actual Outcome
-
-* Validates our approach — text (papers) training improves video summarization when forgetting is controlled
-* ROUGE-1/2/L and BERTScore F1 adopted in evaluation harness (1,400 lines)
-* CIDEr-D not used (more relevant for captioning than summarization)
-* Cross-attention not implemented (would require architectural change to Mistral); curriculum mixing achieves similar effect through shared adapter weights
-
----
+* Validates text+video approach. ROUGE/BERTScore adopted in eval harness.
 
 ## Paper 8: VISTA (2024)
-
-**Video Summarization Dataset for Academic Videos**
-
-### Core Contribution
-
-18.6K academic video-summary pairs with plan-based generation.
-
-### Key Statistics
-
-* Videos: 6.8 min avg, 16.36 shots
-* Summaries: 192.6 tokens, 7.19 sentences
-* Domains: multiple academic fields
-
-### Using for Project
-
-* Validates academic video summarization task
-* Provides baseline metrics
-* Plan-based approach: 2-stage (plan → summary)
-
-### Actual Outcome
-
-* Validates academic video summarization as a viable research task
-* Our dataset: 738 videos, mean 152 label tokens (comparable to VISTA's 192.6)
-* Plan-based generation not adopted — direct summarization via decoder-only LLM instead
-* VISTA's 18.6K scale not achievable with our collection pipeline; 738 videos sufficient for curriculum proof-of-concept
-
----
+* Validates academic video summarization task. Our 738 videos comparable to their stats.
 
 ## Paper 9: CoMM (2024)
-
-**Cross-Modal Mutual Learning**
-
-### Core Contribution
-
-Bidirectional knowledge transfer between modalities.
-
-### Key Formula
-
-```
-L_mutual = L_src→tgt + L_tgt→src
-```
-
-### Using for Project
-
-* Bidirectional paper↔video alignment
-* Validates curriculum mixing strategy
-
-### Actual Outcome
-
-* Validates our Phase 2-3 mixed training — bidirectional paper↔video samples in same batches
-* Cross-modal pairs (1,218 SBERT-mined, threshold ≥ 0.55) serve as explicit alignment bridge
-* CMC metric (SBERT cosine similarity between paper/video summaries of same content) improved 0.356→0.531 (+49%)
-* Full mutual learning loss not implemented — CrossCLR serves the alignment role instead
+* Validates bidirectional paper↔video curriculum mixing. CMC improved 0.356→0.531.
 
 ---
 
-## Integrated Framework Summary
+## Final Framework (As Implemented)
 
-### Six Synergistic Methods
+### Methods Applied
 
-1. **OPLoRA** - Subspace preservation (k=16/128) → **k=16 used, left-projection only**
-2. **LoRA+** - Asymmetric LR (λ=8, ηB=8·ηA) → **working as designed**
-3. **CrossCLR** - Contrastive learning (τ=0.03, λ=0.7) → **partially working (NaN on some batches)**
-4. **MoNA** - Gradient alignment (D_gap monitoring) → **monitoring role only, not training loss**
-5. **EWC** - Fisher weighting (λ=200/400) → **working as designed**
-6. **DoRA** - Optional (magnitude decomposition) → **dropped for VRAM**
+| Method | Phase | Status | Ablation Finding |
+|--------|-------|--------|-----------------|
+| LoRA+ | All | Working | Not ablated (baseline method) |
+| OPLoRA | 2-3 | Working | Secondary: BERTScore +45%, nom. control |
+| EWC | 2-3 | Working | **Over-constrains at λ=400; removal improves all metrics** |
+| CrossCLR | 3 | Partial (NaN) | Not ablated independently |
+| Curriculum | All | Working | **Primary mechanism (~80% of improvement)** |
+| DoRA | — | Dropped | N/A |
 
-### Curriculum Learning (Planned → Actual)
+### Curriculum (Actual)
 
-| Phase | Planned | Actual |
-|-------|---------|--------|
-| Phase 1 | 2 epochs, 100% papers, LoRA+ | **3 epochs**, 100% papers, LoRA+ (extended for stronger Fisher) |
-| Phase 2 | 1 epoch, 70/30 mix, +OPLoRA +EWC | 1 epoch, **50/40/10** mix, +OPLoRA k=16, +EWC λ=200 |
-| Phase 3 | 1 epoch, 50/50 mix, +CrossCLR | 1 epoch, **30/60/10** mix, +CrossCLR τ=0.03, EWC λ=400 |
+* **Phase 1** (3 epochs): 100% papers, LoRA+ only, 234 steps
+* **Phase 2** (1 epoch): 50/40/10 mix, +OPLoRA k=16, +EWC λ=200, 78 steps
+* **Phase 3** (1 epoch): 30/60/10 mix, +CrossCLR τ=0.03, EWC λ=400, 78 steps
 
-### Composite Loss (Actual, Phase 3)
-
-```
-L_total = L_CE 
-        + 0.2·L_diversity 
-        + 0.4·L_terminology
-        + 0.3·L_crossclr 
-        + λ_ewc·L_EWC
-```
-
-### Key Monitoring Metrics (Planned → Actual)
-
-| Metric | Target | Actual | Status |
-|--------|--------|--------|--------|
-| ρk < 0.3 | subspace interference | Stayed < 0.5 | ✅ Met (k scaling never triggered) |
-| δ¹/δ² ∈ [0.5, 2.0] | feature efficiency | Not monitored | ⏭ Cut for time |
-| D_gap < 0.7 | modality gap | +0.55 → +1.96 | ✅ Positive (improving) |
-| Probe accuracy > 85% | knowledge retention | Not implemented | ⏭ Cut for time |
-
-### Expected vs Achieved Performance
-
-| Metric | Expected | Achieved | Status |
-|--------|----------|----------|--------|
-| Paper R-1 | ≥0.35 (maintain baseline) | 0.309 (-3.4%) | ⚠️ Slight miss (controlled trade-off) |
-| Video R-1 | ≥0.37 (+42% vs degraded) | **0.417 (+58%)** | ✅ Exceeded |
-| PVR | ≤16% | **14.1%** | ✅ Met |
-| CMC | improvement | **+49%** | ✅ Exceeded |
-| Training time | 8 weeks | **~22 GPU hours** | ✅ Massively faster |
-| Combined gain | +8-12% | **+58% video, +49% CMC** | ✅ Exceeded |
-
----
-
-## Critical Hyperparameters (Week 5 Tuning)
-
-* **λ_ratio** ∈ {4, 8, 16} - LoRA+ asymmetry → **λ=8 used, no sweep needed**
-* **k** ∈ {16, 128} - OPLoRA projection rank → **k=16 throughout (ρk never triggered scaling)**
-* **λ_ewc** ∈ {200, 400} - EWC strength → **200 Phase 2, 400 Phase 3 (as planned)**
-* **τ** = 0.03 - CrossCLR temperature (fixed) → **used as planned**
-* **γ** = 0.9 - Connectivity threshold (fixed) → **used as planned**
-
-### Decision Criteria (Planned → Actual)
-
-| Criterion | Planned | Triggered? | Outcome |
-|-----------|---------|------------|---------|
-| ρk > 0.5 → scale k: 16→128 | Yes | **No** | ρk stayed below threshold |
-| D_gap > 0.7 after Phase 1 → extend to 3 epochs | Yes | **N/A** | D_gap metric used differently (gating, not extension) |
-| δ¹/δ² ∉ [0.5,2.0] → adjust λ_ratio | Planned | **Not monitored** | Cut for time |
-
----
-
-## Implementation Issues & Fixes Log
-
-### 1. Fisher OOM (Critical, Phase 1 exit)
-* **Problem:** Disabling gradient checkpointing for Fisher backward caused OOM (28.9GB on 16GB)
-* **Fix:** Keep gradient checkpointing ON, batch_size=1, max_total_len=512, n_samples=100
-* **Result:** Completed in 37 seconds
-
-### 2. OPLoRA dtype mismatch (Critical, Phase 2)
-* **Problem:** bitsandbytes LoRA layers output uint8, matmul fails on `Byte @ Float`
-* **Fix:** Cast to float32 in hook: `out_f = output.float(); Uk_f = Uk_local.float()`
-
-### 3. OPLoRA dimension mismatch (Critical, Phase 2)
-* **Problem:** Hook received 3D tensor (B,T,D), matmul assumed 2D
-* **Fix:** `coeffs = out_f @ Uk_f; proj = out_f - coeffs @ Uk_f.T` (broadcasting handles batch)
-
-### 4. CrossCLR inplace modification (Critical, Phase 3)
-* **Problem:** Queue update during forward conflicted with gradient checkpointing recomputation
-* **Fix:** `queue_snapshot = self.queue.clone().detach()` before any computation
-
-### 5. CrossCLR NaN (Partial fix, Phase 3)
-* **Problem:** `log(positive / denominator)` hit zero when queue contained random embeddings
-* **Status:** Queue snapshot reduced frequency. Full fix: warmup queue N steps before enabling loss.
-
-### 6. Scheduler param group mismatch (Critical, Phase 3)
-* **Problem:** CrossCLR projection head added 4th param group after scheduler created for 3
-* **Fix:** Move `optimizer.add_param_group()` before `setup_scheduler()`
-
-### 7. Windows Unicode (Cosmetic)
-* **Problem:** `→` and `λ` crash Windows cp1252 console encoding
-* **Status:** Cosmetic only. Metrics still log correctly to JSONL.
-
----
-
-## Training Timeline
-
-| Date | Event | Duration |
-|------|-------|----------|
-| Mar 6 17:28 | Phase 1 start | — |
-| Mar 6 19:20 | Phase 1 complete (adapter saved) | 1h 52m |
-| Mar 6 19:41 | Fisher computation (standalone fix) | 37s |
-| Mar 6 20:34 | Phase 1 eval start | — |
-| Mar 7 00:37 | Phase 1 eval complete | 4h 3m |
-| Mar 7 02:30 | Phase 2 SVD computation | ~8m |
-| Mar 7 08:36 | Phase 2 training start | — |
-| Mar 7 09:30 | Phase 2 complete | 54m |
-| Mar 7 20:07 | Phase 3 start | — |
-| Mar 7 21:36 | Phase 3 complete | 1h 29m |
-| Mar 7 21:38 | Phase 3 eval start | — |
-| Mar 8 01:41 | Phase 3 eval complete | 4h 3m |
-| Mar 8 01:50 | Phase 2 eval start | — |
-| Mar 8 05:55 | Phase 2 eval complete | 4h 5m |
-| Mar 8 10:49 | Vanilla LoRA ablation start | — |
-| Mar 8 12:40 | Vanilla LoRA ablation complete | 1h 51m |
-| Mar 8 12:42 | Vanilla LoRA eval start | — |
-| Mar 8 16:05 | Vanilla LoRA eval complete | 3h 23m |
-
-**Total GPU time: ~22 hours** (training ~6h, evaluation ~16h)
-
----
-
-## Fisher Information Statistics
-
-```
-Parameters tracked: 448 (224 A + 224 B)
-Total entries: 83,886,080
-All 100% nonzero
-Highest Fisher: v_proj layers (max=0.052) — value projections most task-critical
-A matrices > B matrices — consistent with LoRA+ theory
-Computed: batch_size=1, max_total_len=512, n_samples=100, grad_ckpt=ON, 37 seconds
+### Hyperparameters (Final)
+```yaml
+model: mistralai/Mistral-7B-v0.1
+quantization: NF4, double quant, bfloat16 compute
+lora: r=32, alpha=64, dropout=0.1
+targets: q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj
+trainable: 83,886,080 / 7,241,732,096 (1.16%)
+optimizer: bitsandbytes AdamW8bit
+batch: micro=3, grad_accum=8, effective=24
+max_total_len: 1280
 ```
 
 ---
@@ -490,35 +186,136 @@ Computed: batch_size=1, max_total_len=512, n_samples=100, grad_ckpt=ON, 37 secon
 
 ### Phase Progression
 
-| Phase | Video R-1 | Video R-2 | Video PVR% | CMC | Paper R-1 | D_gap |
-|-------|-----------|-----------|------------|-----|-----------|-------|
-| Baseline (zero-shot) | 0.263 | 0.032 | 9.9 | 0.356 | 0.320 | — |
-| Phase 1 (LoRA+) | 0.305 | 0.052 | 15.9 | 0.474 | 0.429 | +0.55 |
-| Phase 2 (+OPLoRA +EWC) | 0.381 | 0.101 | 10.2 | 0.473 | 0.296 | +1.26 |
-| Phase 3 (full framework) | 0.417 | 0.119 | 14.1 | 0.531 | 0.309 | +1.96 |
-| Vanilla LoRA (ablation) | 0.315 | 0.060 | 18.4 | 0.470 | 0.451 | +1.05 |
-| IMPACT 2025 (naive LoRA) | 0.272 | 0.060 | 31.4 | — | 0.333 | — |
+| Phase | Video R-1 | Video R-2 | Video PVR% | CMC | Paper R-1 |
+|-------|-----------|-----------|------------|-----|-----------|
+| Baseline | 0.263 | 0.032 | 10.0 | 0.356 | 0.320 |
+| Phase 1 | 0.305 | 0.052 | 15.9 | 0.474 | 0.429 |
+| Phase 2 | 0.381 | 0.101 | 10.2 | 0.473 | 0.296 |
+| Phase 3 | 0.417 | 0.119 | 14.1 | 0.531 | 0.309 |
+| Vanilla LoRA | 0.315 | 0.060 | 18.4 | 0.470 | 0.451 |
+| IMPACT 2025 | 0.272 | 0.060 | 31.4 | — | 0.333 |
+
+### Component Ablations (March 20, 2026)
+
+| Configuration | Video R-1 | Video R-2 | BERTScore | PVR% | Nom.% | CMC |
+|--------------|-----------|-----------|-----------|------|-------|-----|
+| Full framework | 0.417 | 0.119 | 0.151 | 14.1 | 6.5 | 0.531 |
+| - EWC | **0.438** | **0.137** | **0.169** | **11.0** | 6.5 | 0.518 |
+| - OPLoRA | 0.389 | 0.114 | 0.104 | 9.8 | 10.5 | 0.506 |
+| Vanilla LoRA | 0.315 | 0.060 | 0.091 | 18.4 | — | 0.470 |
+
+### Contribution Hierarchy (from ablations)
+
+1. **Curriculum phasing** (~80%): Vanilla LoRA (no curriculum) gets R-1=0.315, PVR=18.4%. All curriculum-based configs get R-1=0.389-0.438, PVR=9.8-11.0%. The phased data mixing does most of the work.
+2. **OPLoRA** (secondary): Prevents nominalization contamination (6.5% vs 10.5%), improves BERTScore (+45%) and video R-1 (+7%). Controls structural style transfer.
+3. **EWC** (harmful at λ=400): Over-constrains model. Removal improves every video metric. When OPLoRA preserves the subspace, Fisher regularization is redundant.
+4. **CrossCLR** (partial): CMC improved but NaN instability limits conclusions.
 
 ### Statistical Significance
 
-* Combined (n=313): R-1 Δ=+0.029 p=0.004, R-2 Δ=+0.027 p<0.001, R-L Δ=+0.017 p=0.002
-* Video only (n=75): R-1 Δ=+0.154 p<0.001 d=1.42, R-2 Δ=+0.087 p<0.001, BERT Δ=+0.183 p<0.001
+* Combined (n=313): R-1 Δ=+0.029 p=0.004, R-2 Δ=+0.027 p<0.001
+* Video only (n=75): R-1 Δ=+0.154 p<0.001 d=1.42, R-2 Δ=+0.087 p<0.001
 
 ### IMPACT 2025 Projections vs Achieved
 
 | Strategy | Projected | Achieved |
 |----------|-----------|----------|
-| Curriculum learning | +20-30% R-1 | **+58% R-1** |
-| Contrastive style loss | +15-25% R-1 | **+49% CMC** |
-| Video fine-tuning | +25-35% R-1 | **+272% R-2** |
-| Orthogonality constraints | mentioned | **PVR 31.4%→14.1%** |
+| Curriculum learning | +20-30% R-1 | +58% R-1 |
+| Contrastive alignment | +15-25% R-1 | +49% CMC |
+| Video fine-tuning | +25-35% R-1 | +272% R-2 |
+| Orthogonality constraints | mentioned | PVR 31.4%→14.1% |
+
+---
+
+## Implementation Issues & Fixes
+
+### 1. Fisher OOM (Critical, Phase 1 exit)
+* Problem: Gradient checkpointing OFF for Fisher = OOM (28.9GB)
+* Fix: Keep ON, batch=1, max_total_len=512, n=100. 37 seconds.
+
+### 2. OPLoRA dtype (Critical, Phase 2)
+* Problem: bitsandbytes uint8 output
+* Fix: Cast float32 in hook
+
+### 3. OPLoRA dimensions (Critical, Phase 2)
+* Problem: 3D tensor (B,T,D) vs expected 2D
+* Fix: Broadcasting `coeffs = out_f @ Uk_f; proj = out_f - coeffs @ Uk_f.T`
+
+### 4. CrossCLR inplace (Critical, Phase 3)
+* Problem: Queue update conflicts with gradient checkpointing
+* Fix: `queue_snapshot = self.queue.clone().detach()`
+
+### 5. CrossCLR NaN (Partial, Phase 3)
+* Problem: Zero denominator with random queue
+* Fix needed: Warmup queue before enabling loss
+
+### 6. Scheduler param groups (Critical, Phase 3)
+* Problem: 4th param group added after scheduler creation
+* Fix: Move add_param_group before setup_scheduler
+
+### 7. Ablation checkpoint overwrite (Operational, March 20)
+* Problem: Ablation configs saved to checkpoints/phase3/final, overwriting Phase 3 adapter
+* Fix: Manually copied to checkpoints/abl_*/final/. Phase 3 adapter safe on HuggingFace.
+
+---
+
+## Training Timeline
+
+| Date | Event | Duration |
+|------|-------|----------|
+| Mar 6 17:28 | Phase 1 start | — |
+| Mar 6 19:20 | Phase 1 complete | 1h 52m |
+| Mar 6 19:41 | Fisher computation | 37s |
+| Mar 7 00:37 | Phase 1 eval complete | 4h 3m |
+| Mar 7 09:30 | Phase 2 complete | 54m |
+| Mar 7 21:36 | Phase 3 complete | 1h 29m |
+| Mar 8 01:41 | Phase 3 eval complete | 4h 3m |
+| Mar 8 05:55 | Phase 2 eval complete | 4h 5m |
+| Mar 8 12:40 | Vanilla LoRA complete | 1h 51m |
+| Mar 8 16:05 | Vanilla LoRA eval complete | 3h 23m |
+| Mar 20 08:36 | No-EWC ablation train | ~2h |
+| Mar 20 12:08 | No-EWC ablation eval | 4h 22m |
+| Mar 20 13:30 | No-OPLoRA ablation train | ~2h |
+| Mar 20 19:47 | No-OPLoRA ablation eval | 4h 13m |
+
+**Total GPU time: ~30 hours** (training ~10h, evaluation ~20h)
+
+---
+
+## Fisher Information Statistics
+```
+Parameters tracked: 448 (224 A + 224 B)
+Total entries: 83,886,080
+All 100% nonzero
+Highest Fisher: v_proj layers (max=0.052)
+A matrices > B matrices (consistent with LoRA+ theory)
+```
 
 ---
 
 ## Paper & Patent Status
 
-* **IMPACT 2025:** Presented Dec 6, 2025. Camera-ready forwarded to Springer. Not yet indexed on SpringerLink/Google Scholar (~3 months post-conference). Action: email conference organizers.
-* **New paper:** "Preventing Catastrophic Forgetting in Cross-Modal Summarization: A Curriculum-Based Approach with Orthogonal Subspace Preservation" — 6-page IEEE format (IEEEtran.cls), all results and figures baked in.
-* **Patent disclosure:** "Phase-Gated Orthogonal Projection for Cross-Modal Adapter Training" — 9-page document, 2 independent + 6 dependent claims. Core novelty: adaptive ρk + phase-dependent λ_EWC + D_gap gating as coordinated feedback loop.
+* **IMPACT 2025:** Presented Dec 6, 2025. Forwarded to Springer. Not yet indexed.
+* **New paper:** "Preventing Catastrophic Forgetting in Cross-Modal Summarization" — revised with ablation results. IEEE (7pp) and Springer LNCS (16pp) versions. Narrative: curriculum is primary, OPLoRA secondary, EWC over-constrains.
+* **Patent disclosure:** "Phase-Gated Orthogonal Projection for Cross-Modal Adapter Training" — 9-page document. Note: ablation findings weaken the adaptive control loop claim; patent angle may need reframing around curriculum gating specifically.
 
 ---
+
+## Artifacts Produced
+
+| Deliverable | Location | Status |
+|-------------|----------|--------|
+| Training code (8 modules) | `src/training/` | ✅ Complete |
+| Phase configs (4 + 6 ablation) | `configs/` | ✅ Complete |
+| Evaluation harness | `scripts/evaluate.py` | ✅ Complete |
+| Figure generation (fig1-5) | `scripts/generate_figures.py` | ✅ Complete |
+| Ablation figure (fig6) | `scripts/generate_fig6.py` | ✅ Complete |
+| IEEE paper (.tex) | `Research_Paper_IEEE.tex` | ✅ Revised with ablations |
+| Springer LNCS paper (.tex) | `Research_Paper_Springer_LNCS.tex` | ✅ Revised with ablations |
+| Patent disclosure | `Patent_Disclosure_ABES_HDS_2026.*` | ✅ Complete |
+| Resume | `Tushar_Jaju_ML_Resume.*` | ✅ Complete |
+| Phase 3 adapter | [HuggingFace](https://huggingface.co/Tushar9802/hybrid-summariser-crossmodal-lora) | ✅ Uploaded |
+| Phase 2 adapter | [HuggingFace](https://huggingface.co/Tushar9802/hybrid-summariser-phase2-lora) | ✅ Uploaded |
+| Dataset | [Kaggle](https://www.kaggle.com/datasets/tusharjaju/hybrid-dataset-summariser-crossmodal) | ✅ Uploaded |
+| README | `README.md` | ✅ Updated with ablations |
+| Research notes | `docs/RESEARCH_NOTES.md` | ✅ This file |
