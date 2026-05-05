@@ -43,6 +43,7 @@ data/validated/**
 data/datasets/*.h5
 data/quarantine/**
 data/hdf5/**
+!data/hdf5/engineering.h5
 !data/lexicons/
 !data/test/.gitkeep
 
@@ -86,3 +87,4 @@ kaggle_upload/engineering.h5
 
 # SVD cache (large tensors)
 checkpoints/svd_cache/
+.claude
