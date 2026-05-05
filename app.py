@@ -14,7 +14,10 @@ LoRA r=32 ~150 MB + activations fits comfortably.
 
 import re
 import time
+import warnings
 from pathlib import Path
+
+warnings.filterwarnings("ignore", message=r"Accessing `__path__` from")
 
 import numpy as np
 import streamlit as st
@@ -44,14 +47,22 @@ ADAPTERS = {
 }
 
 
+def _local_adapter_ready(local: Path | None) -> bool:
+    if not local:
+        return False
+    p = Path(local)
+    return p.is_dir() and any(
+        (p / f).exists() for f in ("adapter_model.safetensors", "adapter_model.bin")
+    )
+
+
 def resolve_adapter(key: str) -> str | None:
     """Return the path or HF Hub ID for an adapter, or None if unavailable."""
     cfg = ADAPTERS.get(key)
     if not cfg:
         return None
-    local = cfg["local"]
-    if local and Path(local).exists():
-        return str(local)
+    if _local_adapter_ready(cfg["local"]):
+        return str(cfg["local"])
     if cfg["hub"]:
         return cfg["hub"]
     return None
@@ -60,7 +71,7 @@ def resolve_adapter(key: str) -> str | None:
 def adapter_source_label(key: str) -> str:
     """Human-readable indicator of where this adapter comes from."""
     cfg = ADAPTERS.get(key, {})
-    if cfg.get("local") and Path(cfg["local"]).exists():
+    if _local_adapter_ready(cfg.get("local")):
         return "local"
     if cfg.get("hub"):
         return f"HF Hub: {cfg['hub']}"
@@ -138,6 +149,21 @@ def load_model_and_adapters(adapter_keys: tuple[str, ...]):
     from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
     from peft import PeftModel
 
+    # accelerate>=1.13 + transformers>=5.7 forward `_is_hf_initialized` to the
+    # parameter constructor; bitsandbytes 0.49.2's Params4bit.__new__ has a
+    # fixed kwarg list and raises TypeError on it. Wrap __new__ to drop unknown
+    # kwargs. No-op on bnb builds that already accept them.
+    from bitsandbytes.nn import Params4bit
+    if not getattr(Params4bit.__new__, "_unknown_kwarg_safe", False):
+        _orig_new = Params4bit.__new__
+
+        def _patched_new(cls, *args, **kwargs):
+            kwargs.pop("_is_hf_initialized", None)
+            return _orig_new(cls, *args, **kwargs)
+
+        _patched_new._unknown_kwarg_safe = True
+        Params4bit.__new__ = _patched_new
+
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, use_fast=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -148,11 +174,24 @@ def load_model_and_adapters(adapter_keys: tuple[str, ...]):
         bnb_4bit_quant_type="nf4",
         bnb_4bit_compute_dtype=torch.float16,
         bnb_4bit_use_double_quant=True,
+        llm_int8_enable_fp32_cpu_offload=True,
     )
+
+    # Budget GPU memory dynamically. Leave ~1 GiB headroom for activations
+    # + KV cache; if free VRAM is < ~4.5 GiB the rest spills to CPU (slow but
+    # correct). On an idle RTX 4070 with no other GPU apps, this typically
+    # keeps the whole model on the GPU.
+    max_memory = None
+    if torch.cuda.is_available():
+        free_bytes, _ = torch.cuda.mem_get_info(0)
+        gpu_budget_gib = max(2.0, free_bytes / (1024 ** 3) - 1.0)
+        max_memory = {0: f"{gpu_budget_gib:.1f}GiB", "cpu": "32GiB"}
+
     base = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
         quantization_config=bnb_config,
         device_map="auto",
+        max_memory=max_memory,
         torch_dtype=torch.float16,
     )
 
