@@ -176,6 +176,15 @@ from pathlib import Path
 from collections import defaultdict
 from dataclasses import dataclass, field, asdict
 from typing import Optional
+import sys
+
+# Windows consoles default to cp1252, which cannot encode the box-drawing and
+# math glyphs in the console summary — force UTF-8 so prints never crash.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
 
 import numpy as np
 import h5py
@@ -258,6 +267,7 @@ class SampleResult:
     avg_sent_len: float = 0.0
     generation_len: int = 0
     generated_text: str = ""
+    reference: str = ""
 
 
 # ━━ HDF5 TEST LOADER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -476,10 +486,14 @@ class SummaryGenerator:
 
         return summary
 
-    def generate_batch(self, samples: list[Sample], label: str = "") -> dict[str, str]:
+    def generate_batch(self, samples: list[Sample], label: str = "",
+                       cache: "GenerationCache" = None) -> dict[str, str]:
         """
         Generate summaries for a list of samples.
         Returns: {sample_id: generated_summary}
+
+        When a GenerationCache is supplied, generation is resumable — summaries
+        already produced in a prior (interrupted) run are skipped.
         """
         results = {}
         total = len(samples)
@@ -488,11 +502,15 @@ class SummaryGenerator:
             if (i + 1) % 25 == 0 or i == 0:
                 log.info(f"  [{label}] Generating {i+1}/{total}...")
 
-            summary = self.generate(sample.source_text)
-
-            # Fallback for empty generation
-            if not summary.strip():
-                summary = "(empty generation)"
+            if cache is not None:
+                summary = cache.get_or_generate(
+                    f"{label}:{sample.sample_id}",
+                    lambda s=sample: self.generate(s.source_text),
+                )
+            else:
+                summary = self.generate(sample.source_text)
+                if not summary.strip():
+                    summary = "(empty generation)"
 
             results[sample.sample_id] = summary
 
@@ -733,6 +751,7 @@ class MetricsEngine:
             avg_sent_len=self.avg_sentence_length(generated),
             generation_len=len(generated.split()),
             generated_text=generated,
+            reference=reference,
         )
 
 
@@ -844,6 +863,24 @@ class StatisticalComparator:
         stat, p_val = wilcoxon(d)
         return {"statistic": float(stat), "p_value": float(p_val)}
 
+    @staticmethod
+    def holm_bonferroni(pvals: dict) -> dict:
+        """Holm-Bonferroni step-down adjusted p-values for a family of tests.
+
+        Controls the family-wise error rate; uniformly more powerful than plain
+        Bonferroni and assumes nothing about dependence between the tests.
+        Returns {key: adjusted_p}.
+        """
+        items = sorted(pvals.items(), key=lambda kv: kv[1])
+        m = len(items)
+        adjusted = {}
+        running_max = 0.0
+        for rank, (key, p) in enumerate(items):
+            adj = min((m - rank) * float(p), 1.0)
+            running_max = max(running_max, adj)  # enforce monotonic non-decrease
+            adjusted[key] = running_max
+        return adjusted
+
     def compare_runs(
         self,
         baseline_results: list[SampleResult],
@@ -880,6 +917,16 @@ class StatisticalComparator:
                 "cohens_d": self.cohens_d(b, a),
                 "wilcoxon": self.wilcoxon_test(b, a),
             }
+
+        # Holm-Bonferroni correction across the metric family. Raw p-values are
+        # kept as "p_value"; "p_value_holm" is the FWER-controlled value. The
+        # two test families (paired-t, Wilcoxon) are corrected separately, not
+        # pooled — they address the same per-metric hypothesis.
+        for test_key in ("paired_t", "wilcoxon"):
+            raw = {m: comparison[m][test_key]["p_value"] for m in metrics}
+            adj = self.holm_bonferroni(raw)
+            for m in metrics:
+                comparison[m][test_key]["p_value_holm"] = adj[m]
 
         return comparison
 
@@ -1070,6 +1117,21 @@ def save_results(
     csv_path.write_text("\n".join(lines))
     log.info(f"Saved: {csv_path}")
 
+    # ── generations.jsonl ──
+    # Full generated + reference text per sample, for offline LLM-as-judge.
+    # Free text (newlines, commas) does not survive a CSV column, hence JSONL.
+    gen_path = run_dir / "generations.jsonl"
+    with gen_path.open("w", encoding="utf-8") as f:
+        for r in all_results:
+            f.write(json.dumps({
+                "sample_id": r.sample_id,
+                "run_name": run_name,
+                "modality": r.modality,
+                "reference": r.reference,
+                "generation": r.generated_text,
+            }, ensure_ascii=False) + "\n")
+    log.info(f"Saved: {gen_path}")
+
     # ── Console summary ──
     print_summary(run_name, paper_agg, video_agg, combined_agg, cross_modal,
                   d_gap, comparison, runtime_sec)
@@ -1103,7 +1165,9 @@ def print_summary(
             m = agg.get(metric, {})
             mean = m.get("mean", 0)
             std = m.get("std", 0)
-            print(f"    {metric:<18s}  {mean:.4f}  (±{std:.4f})")
+            ci = m.get("ci95", [0, 0])
+            print(f"    {metric:<18s}  {mean:.4f}  (±{std:.4f})  "
+                  f"[{ci[0]:.4f}, {ci[1]:.4f}]")
 
     # Cross-modal
     if cross_modal and cross_modal.get("n", 0) > 0:
@@ -1133,14 +1197,58 @@ def print_summary(
                 continue
             t_info = info.get("paired_t", {})
             p_val = t_info.get("p_value", 1.0)
+            p_holm = t_info.get("p_value_holm", p_val)
             cd = info.get("cohens_d", 0.0)
-            sig = "*" if p_val < 0.05 else " "
-            sig2 = "**" if p_val < 0.01 else sig
+            # Significance stars reflect the Holm-corrected p-value.
+            sig = "*" if p_holm < 0.05 else " "
+            sig2 = "**" if p_holm < 0.01 else sig
             print(f"    {metric:<18s}  Δ={t_info.get('mean_diff', 0):+.4f}  "
-                  f"p={p_val:.4f}{sig2}  d={cd:+.3f}")
+                  f"p={p_val:.4f}  p_holm={p_holm:.4f}{sig2}  d={cd:+.3f}")
 
     print(f"\n  Runtime: {runtime_sec:.0f}s ({runtime_sec/60:.1f} min)")
     print(f"{'='*70}\n")
+
+
+# ━━ GENERATION CACHE ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class GenerationCache:
+    """Append-only generation cache for resumable evaluation.
+
+    Each summary is written to a JSONL the moment it is produced, so an
+    interrupted eval re-run skips generations already done instead of
+    repeating the multi-hour generation pass.
+    """
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.cache: dict[str, str] = {}
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                rec = json.loads(line)
+                self.cache[rec["key"]] = rec["generation"]
+            if self.cache:
+                log.info(f"Resuming generation: {len(self.cache)} summaries cached")
+        self._fh = path.open("a", encoding="utf-8")
+
+    def get_or_generate(self, key: str, generate_fn) -> str:
+        """Return the cached summary for `key`, or call generate_fn(), persist
+        the result, and return it."""
+        if key in self.cache:
+            return self.cache[key]
+        summary = generate_fn()
+        if not summary.strip():
+            summary = "(empty generation)"
+        self.cache[key] = summary
+        self._fh.write(json.dumps({"key": key, "generation": summary},
+                                  ensure_ascii=False) + "\n")
+        self._fh.flush()
+        return summary
+
+    def close(self):
+        self._fh.close()
 
 
 # ━━ MAIN ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -1220,8 +1328,14 @@ def main():
 
     generator = SummaryGenerator(model, tokenizer, beam=args.beam)
 
-    paper_generations = generator.generate_batch(paper_samples, label="papers")
-    video_generations = generator.generate_batch(video_samples, label="videos")
+    # Resumable generation cache — written incrementally so an interrupted
+    # eval continues instead of regenerating from zero.
+    run_dir = RESULTS_DIR / args.run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    gen_cache = GenerationCache(run_dir / "_generations_cache.jsonl")
+
+    paper_generations = generator.generate_batch(paper_samples, label="papers", cache=gen_cache)
+    video_generations = generator.generate_batch(video_samples, label="videos", cache=gen_cache)
 
     # Cross-modal pair generations (generate from pair-specific input_ids)
     pair_paper_gens = {}
@@ -1232,8 +1346,14 @@ def main():
             if (i + 1) % 25 == 0:
                 log.info(f"  [pairs] Generating {i+1}/{len(pair_samples)}...")
 
-            pair_paper_gens[pair.pair_id] = generator.generate(pair.paper_source)
-            pair_video_gens[pair.pair_id] = generator.generate(pair.video_source)
+            pair_paper_gens[pair.pair_id] = gen_cache.get_or_generate(
+                f"pair_paper:{pair.pair_id}",
+                lambda p=pair: generator.generate(p.paper_source))
+            pair_video_gens[pair.pair_id] = gen_cache.get_or_generate(
+                f"pair_video:{pair.pair_id}",
+                lambda p=pair: generator.generate(p.video_source))
+
+    gen_cache.close()
 
     # ── Step 4: Unload model, free VRAM ──
     log.info("=" * 60)
@@ -1373,6 +1493,9 @@ def main():
         cross_modal, comparison, d_gap,
         runtime,
     )
+
+    # Eval completed — drop the resume cache so a future re-run regenerates.
+    (RESULTS_DIR / args.run_name / "_generations_cache.jsonl").unlink(missing_ok=True)
 
     log.info("Done.")
 

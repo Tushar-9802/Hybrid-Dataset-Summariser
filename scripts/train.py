@@ -11,9 +11,15 @@ Run from repo root:
 
 import argparse
 import logging
+import os
+import random
 import sys
 from pathlib import Path
 
+# Must be set before the CUDA context initializes for deterministic cuBLAS.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
+import numpy as np
 import yaml
 import torch
 
@@ -66,9 +72,30 @@ def deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
-def run_single_phase(config_path: str, run_name: str):
+def seed_everything(seed: int):
+    """Seed all RNGs and enable deterministic kernels (functional determinism).
+
+    Non-deterministic GPU ops fall back with a warning rather than erroring
+    (warn_only=True) — sufficient for multi-seed variance estimation, without
+    forcing CPU fallbacks that would change runtimes.
+    """
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    log.info(f"Seeded all RNGs with seed={seed} (cudnn deterministic, warn_only)")
+
+
+def run_single_phase(config_path: str, run_name: str, seed: int = 42,
+                     checkpoint_interval_sec: int = 3600):
     """Run a single training phase."""
     config = load_config(config_path)
+    config["seed"] = seed
+    config.setdefault("monitoring", {})["checkpoint_interval_sec"] = checkpoint_interval_sec
     phase = config.get("phase", 1)
     config["data"] = config.get("data", {})
     config["data"]["hdf5_path"] = config["data"].get("hdf5_path", "data/hdf5/engineering.h5")
@@ -98,7 +125,7 @@ def run_single_phase(config_path: str, run_name: str):
     return result
 
 
-def run_all_phases(run_name: str):
+def run_all_phases(run_name: str, seed: int = 42, checkpoint_interval_sec: int = 3600):
     """Run all 3 phases sequentially."""
     configs_dir = Path("configs")
 
@@ -106,7 +133,8 @@ def run_all_phases(run_name: str):
     log.info("="*60)
     log.info("PHASE 1: Paper-only training")
     log.info("="*60)
-    result1 = run_single_phase(str(configs_dir / "phase1.yaml"), f"{run_name}_phase1")
+    result1 = run_single_phase(str(configs_dir / "phase1.yaml"), f"{run_name}_phase1", seed,
+                               checkpoint_interval_sec)
     replay_indices = result1.get("replay_indices")
 
     # Save replay indices into the checkpoint for Phase 2 to find
@@ -126,13 +154,15 @@ def run_all_phases(run_name: str):
     log.info("="*60)
     log.info("PHASE 2: Mixed training with EWC + OPLoRA")
     log.info("="*60)
-    result2 = run_single_phase(str(configs_dir / "phase2.yaml"), f"{run_name}_phase2")
+    result2 = run_single_phase(str(configs_dir / "phase2.yaml"), f"{run_name}_phase2", seed,
+                               checkpoint_interval_sec)
 
     # Phase 3
     log.info("="*60)
     log.info("PHASE 3: Video-focused with CrossCLR")
     log.info("="*60)
-    result3 = run_single_phase(str(configs_dir / "phase3.yaml"), f"{run_name}_phase3")
+    result3 = run_single_phase(str(configs_dir / "phase3.yaml"), f"{run_name}_phase3", seed,
+                               checkpoint_interval_sec)
 
     log.info("="*60)
     log.info("ALL PHASES COMPLETE")
@@ -158,20 +188,20 @@ Examples:
     parser.add_argument("--run-name", type=str, required=True, help="Name for this run")
     parser.add_argument("--all", action="store_true", help="Run all 3 phases sequentially")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--checkpoint-interval-sec", type=int, default=3600,
+                        help="Seconds between resumable checkpoints (default 3600 = 1h)")
     args = parser.parse_args()
 
     # Seed everything
-    torch.manual_seed(args.seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
+    seed_everything(args.seed)
 
     Path("logs").mkdir(exist_ok=True)
     Path("checkpoints").mkdir(exist_ok=True)
 
     if args.all:
-        run_all_phases(args.run_name)
+        run_all_phases(args.run_name, args.seed, args.checkpoint_interval_sec)
     elif args.config:
-        run_single_phase(args.config, args.run_name)
+        run_single_phase(args.config, args.run_name, args.seed, args.checkpoint_interval_sec)
     else:
         parser.error("Provide --config or --all")
 

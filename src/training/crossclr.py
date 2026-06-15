@@ -61,6 +61,9 @@ class CrossCLRLoss(nn.Module):
         self.queue = F.normalize(self.queue, dim=-1)
         self.register_buffer("queue_modality", torch.zeros(queue_size, dtype=torch.long))
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
+        # Tracks total embeddings enqueued — used to gate queue negatives until
+        # the queue has been filled once (warmup).
+        self.register_buffer("queue_count", torch.zeros(1, dtype=torch.long))
         self.queue_size = queue_size
 
     @torch.no_grad()
@@ -82,6 +85,7 @@ class CrossCLRLoss(nn.Module):
             self.queue_modality[:overflow] = modality_id
 
         self.queue_ptr[0] = (ptr + batch_size) % self.queue_size
+        self.queue_count += batch_size
 
     def get_embeddings(self, model, input_ids, attention_mask, modality: str):
         """
@@ -138,15 +142,25 @@ class CrossCLRLoss(nn.Module):
         # Inter-modality negatives: all off-diagonal pairs
         inter_neg = sim_pv.exp().sum(dim=1) - positives.exp()  # (B,)
 
-        # Queue negatives (mixed modalities)
-        sim_p_queue = (paper_embeds @ queue_snapshot.T) / self.tau  # (B, Q)
-        queue_neg = sim_p_queue.exp().sum(dim=1)  # (B,)
+        # Queue negatives (mixed modalities) — skipped until the momentum queue
+        # has been filled once. Before warmup the queue holds randn noise
+        # (see __init__), which would inject meaningless contrastive gradients.
+        queue_warm = bool(self.queue_count.item() >= self.queue_size)
+        if queue_warm:
+            sim_p_queue = (paper_embeds @ queue_snapshot.T) / self.tau  # (B, Q)
+            queue_neg = sim_p_queue.exp().sum(dim=1)  # (B,)
+        else:
+            queue_neg = torch.zeros(B, device=paper_embeds.device)
 
         # Intra-modality negatives (paper vs paper, with connectivity weighting)
         sim_pp = (paper_embeds @ paper_embeds.T) / self.tau  # (B, B)
         # Connectivity: average cosine similarity
         connectivity = (paper_embeds @ paper_embeds.T).mean(dim=1)  # (B,)
-        weights = (connectivity / self.kappa).exp()  # (B,)
+        # Clamp the exponent before exp(): with kappa=3.5e-4, connectivity/kappa
+        # reaches ~10^3 and exp() overflows to inf -> nan loss. Clamping keeps
+        # the weighting finite. NOTE: the kappa scale itself is suspect and is
+        # flagged for the Sprint 2 CrossCLR re-validation — not changed here.
+        weights = (connectivity / self.kappa).clamp(min=-20.0, max=20.0).exp()  # (B,)
 
         intra_neg = (sim_pp.exp() * weights.unsqueeze(0)).sum(dim=1)  # (B,)
         # Remove self-similarity

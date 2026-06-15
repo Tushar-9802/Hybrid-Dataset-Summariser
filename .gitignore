@@ -88,3 +88,5 @@ kaggle_upload/engineering.h5
 # SVD cache (large tensors)
 checkpoints/svd_cache/
 .claude
+*.pdf
+*.tex

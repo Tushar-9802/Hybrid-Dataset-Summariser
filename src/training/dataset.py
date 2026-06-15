@@ -394,17 +394,28 @@ def build_dataloader(
         3: {"paper": 0.30, "video": 0.60, "pair": 0.10, "replay": 0.10},
     }[phase]
 
+    # Per-loader generators so shuffle order is a clean function of `seed`,
+    # not coupled to how much global RNG state was consumed before iteration.
+    def _gen(offset: int) -> torch.Generator:
+        g = torch.Generator()
+        g.manual_seed(seed + offset)
+        return g
+
     return {
         "paper": DataLoader(paper_ds, batch_size=batch_size, shuffle=True,
-                            num_workers=num_workers, pin_memory=True, drop_last=True),
+                            num_workers=num_workers, pin_memory=True, drop_last=True,
+                            generator=_gen(0)),
         "video": DataLoader(video_ds, batch_size=batch_size, shuffle=True,
-                            num_workers=num_workers, pin_memory=True, drop_last=True)
+                            num_workers=num_workers, pin_memory=True, drop_last=True,
+                            generator=_gen(1))
                  if video_ds else None,
         "pair": DataLoader(pair_ds, batch_size=batch_size, shuffle=True,
-                           num_workers=num_workers, pin_memory=True, drop_last=True)
+                           num_workers=num_workers, pin_memory=True, drop_last=True,
+                           generator=_gen(2))
                 if pair_ds else None,
         "replay": DataLoader(replay_ds, batch_size=batch_size, shuffle=True,
-                             num_workers=num_workers, pin_memory=True, drop_last=True)
+                             num_workers=num_workers, pin_memory=True, drop_last=True,
+                             generator=_gen(3))
                   if replay_ds else None,
         "ratios": ratios,
         "paper_dataset": paper_ds,

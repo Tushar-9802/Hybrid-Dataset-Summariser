@@ -8,10 +8,12 @@ Integrates: LoRA+, OPLoRA, EWC, CrossCLR, CompositeLoss, CurriculumSampler.
 
 import logging
 import random
+import shutil
 import time
 from itertools import cycle
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch.nn.utils import clip_grad_norm_
 
@@ -35,7 +37,9 @@ class PhaseTrainer:
     def __init__(self, config: dict, run_name: str):
         self.config = config
         self.run_name = run_name
+        self.ckpt_root = Path("checkpoints") / run_name
         self.phase = config.get("phase", 1)
+        self.seed = config.get("seed", 42)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         hw = config.get("hardware", {})
@@ -48,6 +52,7 @@ class PhaseTrainer:
         self.log_every = mon_cfg.get("log_every", 10)
         self.eval_every = mon_cfg.get("eval_every", 500)
         self.checkpoint_every = mon_cfg.get("checkpoint_every", 500)
+        self.checkpoint_interval_sec = mon_cfg.get("checkpoint_interval_sec", 3600)
 
         self.hdf5_path = config.get("data", {}).get("hdf5_path", "data/hdf5/engineering.h5")
 
@@ -61,6 +66,7 @@ class PhaseTrainer:
         self.crossclr = None
         self.composite_loss = None
         self.monitor = None
+        self._curriculum_rng = None
 
     def setup(self):
         """Initialize all components for this phase."""
@@ -68,8 +74,13 @@ class PhaseTrainer:
         log.info(f"Setting up Phase {self.phase} training")
         log.info(f"{'='*60}")
 
-        # Model
+        # Model — resume from this run's in-progress checkpoint if one exists,
+        # otherwise from the configured phase hand-off (resume_from).
         adapter_path = self.config.get("resume_from", None)
+        resume_dir = self.ckpt_root / "latest"
+        if (resume_dir / "adapter_config.json").exists():
+            log.info(f"Resumable checkpoint found — loading adapter from {resume_dir}")
+            adapter_path = str(resume_dir)
         self.model, self.tokenizer = setup_model(self.config, adapter_path=adapter_path)
 
         # EWC (Phase 2-3)
@@ -138,6 +149,7 @@ class PhaseTrainer:
             phase=self.phase, batch_size=self.batch_size,
             max_total_len=self.max_total_len,
             replay_indices=replay_indices,
+            seed=self.seed,
         )
         val_loaders = build_val_loader(
             self.hdf5_path, self.tokenizer,
@@ -183,22 +195,33 @@ class PhaseTrainer:
         if loaders.get("replay"):
             iterators["replay"] = cycle(loaders["replay"])
 
+        # Curriculum batch-type RNG (instance attr so checkpoints can snapshot
+        # it). Phase offset keeps phases 1/2/3 from sharing an identical stream.
+        self._curriculum_rng = random.Random(self.seed + self.phase)
+
+        # Resume from this run's in-progress checkpoint if one exists.
+        start_epoch, start_global_step, start_local_step = 0, 0, 0
+        resumed = self._load_resume_state(steps_per_epoch)
+        if resumed is not None:
+            start_epoch, start_global_step, start_local_step = resumed
+
         # Training loop
         self.model.train()
-        global_step = 0
-        rng = random.Random(42)
+        global_step = start_global_step
+        last_ckpt_time = time.time()
 
-        for epoch in range(epochs):
+        for epoch in range(start_epoch, epochs):
             log.info(f"Epoch {epoch + 1}/{epochs}")
             epoch_loss = 0.0
+            first_local = start_local_step if epoch == start_epoch else 0
 
-            for local_step in range(steps_per_epoch):
+            for local_step in range(first_local, steps_per_epoch):
                 # Accumulate gradients over grad_accum micro-batches
                 accumulated_loss_dict = {}
 
                 for micro in range(self.grad_accum):
                     # Select batch type based on curriculum ratios
-                    r = rng.random()
+                    r = self._curriculum_rng.random()
                     if r < ratios["paper"] - ratios["replay"]:
                         batch_type = "paper"
                     elif r < ratios["paper"]:
@@ -224,6 +247,15 @@ class PhaseTrainer:
                         batch = next(iterators["paper"])
                         loss, loss_dict = self._train_step(batch)
                         batch_type = "paper"
+
+                    # Skip micro-batches with non-finite loss (NaN/inf) rather
+                    # than propagating corrupt gradients into the optimizer step.
+                    if not torch.isfinite(loss):
+                        log.warning(
+                            f"Non-finite loss ({loss.item()}) at step {global_step}, "
+                            f"micro {micro}, batch_type={batch_type} — skipping micro-batch"
+                        )
+                        continue
 
                     # Scale loss for accumulation
                     scaled_loss = loss / self.grad_accum
@@ -267,23 +299,28 @@ class PhaseTrainer:
                     self.monitor.log_eval(global_step, val_metrics)
                     self.model.train()
 
-                # Periodic checkpoint
-                if global_step % self.checkpoint_every == 0:
-                    ckpt_path = f"checkpoints/phase{self.phase}/step_{global_step}"
-                    save_checkpoint(
-                        self.model, self.optimizer, self.scheduler,
-                        epoch, global_step, ckpt_path,
-                    )
+                # Hourly resumable checkpoint
+                if time.time() - last_ckpt_time >= self.checkpoint_interval_sec:
+                    self._write_resume_checkpoint(epoch, global_step)
+                    last_ckpt_time = time.time()
 
-            avg_loss = epoch_loss / max(steps_per_epoch, 1)
+            steps_run = max(steps_per_epoch - first_local, 1)
+            avg_loss = epoch_loss / steps_run
             log.info(f"Epoch {epoch + 1} complete. Avg loss: {avg_loss:.4f}")
 
+            # Epoch-boundary checkpoint
+            self._write_resume_checkpoint(epoch + 1, global_step)
+
         # Final checkpoint
-        final_path = f"checkpoints/phase{self.phase}/final"
+        final_path = str(self.ckpt_root / "final")
         save_checkpoint(
             self.model, self.optimizer, self.scheduler,
             epochs, global_step, final_path,
         )
+        # Run complete — drop the resume checkpoint so a re-run starts fresh.
+        latest_dir = self.ckpt_root / "latest"
+        if latest_dir.exists():
+            shutil.rmtree(latest_dir, ignore_errors=True)
 
         # Compute Fisher at end of Phase 1
         if self.phase == 1:
@@ -299,7 +336,7 @@ class PhaseTrainer:
         return {
             "global_step": global_step,
             "final_checkpoint": final_path,
-            "replay_indices": self._sample_replay_indices(loaders["paper_dataset"])
+            "replay_indices": self._sample_replay_indices(loaders["paper_dataset"], seed=self.seed)
                               if self.phase == 1 else replay_indices,
         }
 
@@ -380,3 +417,64 @@ class PhaseTrainer:
         indices = rng.sample(range(n), k)
         log.info(f"Replay buffer: {k} samples ({ratio*100:.0f}% of {n})")
         return indices
+
+    def _write_resume_checkpoint(self, epoch: int, global_step: int):
+        """Write a full resumable checkpoint to checkpoints/{run}/latest.
+
+        Captures model adapter + optimizer + scheduler (via save_checkpoint)
+        plus every RNG state and the CrossCLR momentum buffers, so an
+        interrupted run can continue without losing progress.
+        """
+        extra = {
+            "rng_python": random.getstate(),
+            "rng_numpy": np.random.get_state(),
+            "rng_torch": torch.get_rng_state(),
+            "rng_cuda": (torch.cuda.get_rng_state_all()
+                         if torch.cuda.is_available() else None),
+            "rng_curriculum": self._curriculum_rng.getstate(),
+        }
+        if self.crossclr is not None:
+            extra["crossclr_state"] = self.crossclr.state_dict()
+        save_checkpoint(
+            self.model, self.optimizer, self.scheduler,
+            epoch, global_step, str(self.ckpt_root / "latest"), extra=extra,
+        )
+
+    def _load_resume_state(self, steps_per_epoch: int):
+        """Restore optimizer/scheduler/RNG/CrossCLR state from this run's
+        latest checkpoint, if present.
+
+        Returns (start_epoch, start_global_step, start_local_step), or None
+        when there is nothing to resume. The model adapter itself is already
+        reloaded in setup() from the same directory.
+        """
+        state_path = self.ckpt_root / "latest" / "training_state.pt"
+        if not state_path.exists():
+            return None
+
+        state = torch.load(state_path, map_location="cpu", weights_only=False)
+        self.optimizer.load_state_dict(state["optimizer_state_dict"])
+        # Optimizer state loads onto CPU — move it to the training device so
+        # the first post-resume step does not hit a device mismatch.
+        for opt_state in self.optimizer.state.values():
+            for k, v in opt_state.items():
+                if isinstance(v, torch.Tensor):
+                    opt_state[k] = v.to(self.device)
+        self.scheduler.load_state_dict(state["scheduler_state_dict"])
+
+        if "rng_python" in state:
+            random.setstate(state["rng_python"])
+            np.random.set_state(state["rng_numpy"])
+            torch.set_rng_state(state["rng_torch"])
+            if state.get("rng_cuda") is not None and torch.cuda.is_available():
+                torch.cuda.set_rng_state_all(state["rng_cuda"])
+            self._curriculum_rng.setstate(state["rng_curriculum"])
+        if self.crossclr is not None and "crossclr_state" in state:
+            self.crossclr.load_state_dict(state["crossclr_state"])
+
+        gstep = int(state["global_step"])
+        start_epoch = gstep // steps_per_epoch
+        start_local_step = gstep % steps_per_epoch
+        log.info(f"RESUMING {self.run_name}: global_step={gstep}, "
+                 f"epoch={start_epoch + 1}, local_step={start_local_step}")
+        return start_epoch, gstep, start_local_step
